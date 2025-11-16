@@ -238,7 +238,267 @@ document.addEventListener('keydown', e => {
     ws.send(JSON.stringify({ type:'stealBlocked', victimId: myId, slot: null }));
   }
 });
+<script>
+/* ==========================================================
+   CONFIG
+========================================================== */
+const WS_URL = "wss://spermbob-server.onrender.com";
+let ws;
+let yourId = null;
 
+/* ==========================================================
+   STATE
+========================================================== */
+let players = {};
+let localCollection = Array(8).fill(null);
+let localMoney = 30;
+let walkers = []; // each walker = {x, speed, el, type}
+
+/* ==========================================================
+   DOM ELEMENTS
+========================================================== */
+const usernameInput = document.getElementById("usernameInput");
+const roomCodeInput = document.getElementById("roomCodeInput");
+const joinBtn = document.getElementById("joinBtn");
+const playersContainer = document.getElementById("playersContainer");
+const walkersContainer = document.getElementById("walkersContainer");
+
+/* ==========================================================
+   JOIN ROOM
+========================================================== */
+joinBtn.onclick = () => {
+    const username = usernameInput.value.trim();
+    const room = roomCodeInput.value.trim();
+    if (!username || !room) return alert("Enter username + room code");
+
+    connectWS(username, room);
+};
+
+/* ==========================================================
+   CONNECT WEBSOCKET
+========================================================== */
+function connectWS(username, room) {
+    ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+        ws.send(JSON.stringify({
+            type: "joinRoom",
+            username,
+            roomCode: room,
+            money: 30
+        }));
+    };
+
+    ws.onmessage = (msg) => {
+        const data = JSON.parse(msg.data);
+        handleServerMessage(data);
+    };
+
+    ws.onclose = () => {
+        console.warn("Disconnected. Reconnecting in 2s...");
+        setTimeout(() => connectWS(username, room), 2000);
+    };
+}
+
+/* ==========================================================
+   SAFE SEND
+========================================================== */
+function safeSend(obj) {
+    if (!ws || ws.readyState !== 1) return;
+    ws.send(JSON.stringify(obj));
+}
+
+/* ==========================================================
+   HANDLE SERVER MESSAGES
+========================================================== */
+function handleServerMessage(data) {
+    if (data.type === "roomUpdate") {
+        players = data.players;
+        yourId = data.you || yourId;
+
+        // Sync collection + money with server copy of YOU
+        if (players[yourId]) {
+            localCollection = players[yourId].collection;
+            localMoney = players[yourId].money;
+        }
+
+        renderPlayers();
+    }
+
+    if (data.type === "stealStart") {
+        showStealBar(data.thiefId, data.victimId, data.slot);
+    }
+
+    if (data.type === "stealBlocked") {
+        hideStealBar(data.victimId, data.slot);
+    }
+
+    if (data.type === "stealSuccess") {
+        hideStealBar(data.victimId, data.slot);
+    }
+}
+
+/* ==========================================================
+   RENDER PLAYERS + COLLECTIONS
+========================================================== */
+function renderPlayers() {
+    playersContainer.innerHTML = "";
+
+    for (const id in players) {
+        const p = players[id];
+
+        const div = document.createElement("div");
+        div.className = "playerCard";
+
+        div.innerHTML = `
+            <div class="playerName">${p.username}</div>
+            <div class="money">$${p.money}</div>
+            <div class="collection"></div>
+        `;
+
+        const col = div.querySelector(".collection");
+
+        p.collection.forEach((item, slot) => {
+            const slotDiv = document.createElement("div");
+            slotDiv.className = "slot";
+
+            if (item) {
+                slotDiv.textContent = item.name;
+            } else {
+                slotDiv.textContent = "[empty]";
+            }
+
+            // YOUR SLOTS get interaction
+            if (id === yourId) {
+                slotDiv.onmousedown = () => startSell(slot);
+                slotDiv.onmouseup = stopHold;
+                slotDiv.onmouseleave = stopHold;
+            } else {
+                // Enemy slots = stealing
+                slotDiv.onmousedown = () => startSteal(id, slot);
+                slotDiv.onmouseup = stopHold;
+                slotDiv.onmouseleave = stopHold;
+            }
+
+            col.appendChild(slotDiv);
+        });
+
+        playersContainer.appendChild(div);
+    }
+}
+
+/* ==========================================================
+   SELL / STEAL HOLD LOGIC
+========================================================== */
+let holdTimer = null;
+const HOLD_TIME = 1500; // 1.5s
+
+function stopHold() {
+    if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+    }
+}
+
+function startSell(slot) {
+    stopHold();
+    holdTimer = setTimeout(() => {
+        safeSend({
+            type: "sell",
+            slot
+        });
+    }, HOLD_TIME);
+}
+
+function startSteal(victimId, slot) {
+    stopHold();
+    holdTimer = setTimeout(() => {
+        safeSend({
+            type: "stealStart",
+            victimId,
+            slot
+        });
+    }, HOLD_TIME);
+}
+
+/* ==========================================================
+   OPTIONAL: SHOW STEAL BAR
+========================================================== */
+function showStealBar(thiefId, victimId, slot) {
+    // Add UI later if needed
+}
+function hideStealBar(victimId, slot) {}
+
+/* ==========================================================
+   WALKER SPAWNING + SMOOTH MOVEMENT
+========================================================== */
+function spawnWalker() {
+    const walker = {
+        x: -100,
+        speed: 50 + Math.random() * 40,
+        type: "walker",
+        el: null
+    };
+
+    const el = document.createElement("div");
+    el.className = "walker";
+    el.textContent = "🚶";
+    walkersContainer.appendChild(el);
+
+    walker.el = el;
+    walkers.push(walker);
+
+    // Click to buy walker
+    el.onmousedown = () => beginBuyWalker(walker);
+    el.onmouseup = stopHold;
+    el.onmouseleave = stopHold;
+}
+
+// BUY WALKER
+function beginBuyWalker(w) {
+    stopHold();
+    holdTimer = setTimeout(() => {
+        const freeSlot = localCollection.findIndex(c => c === null);
+        if (freeSlot === -1) return alert("No space!");
+
+        safeSend({
+            type: "buy",
+            slot: freeSlot,
+            item: {
+                name: "Walker",
+                cost: 5,
+                mps: 1
+            }
+        });
+
+        // Remove walker visually:
+        w.el.remove();
+        walkers = walkers.filter(x => x !== w);
+
+    }, HOLD_TIME);
+}
+
+// LOOP
+let lastTime = performance.now();
+function loop(t) {
+    const dt = (t - lastTime) / 1000;
+    lastTime = t;
+
+    walkers.forEach(w => {
+        w.x += w.speed * dt;
+        w.el.style.transform = `translateX(${w.x}px)`;
+
+        if (w.x > window.innerWidth + 200) {
+            w.el.remove();
+        }
+    });
+
+    requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// Spawn walkers endlessly
+setInterval(spawnWalker, 2000);
 </script>
 </body>
 </html>

@@ -5,9 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Steal A Spermbob — Multiplayer</title>
 <style>
-  :root{
-    --bg:#111827; --panel:#0b1220; --muted:#9aa6b2;
-  }
+  :root{ --bg:#111827; --panel:#0b1220; --muted:#9aa6b2; }
   html,body{height:100%;margin:0;background:linear-gradient(#0b1220,#07101a);font-family:Inter,system-ui,Arial;color:#e6eef8}
   #topbar{position:fixed;left:0;right:0;top:0;height:48px;display:flex;align-items:center;gap:12px;padding:8px 12px;background:rgba(0,0,0,0.25);z-index:40}
   #money{font-weight:700}
@@ -101,13 +99,12 @@ const COLLECTION_SLOTS = 8;
 
 /* ========= STATE ========= */
 let ws = null;
-let connected = false;
-let playerId = null;           // assigned by server on roomUpdate.you
+let playerId = null;
 let username = null;
 let roomCode = null;
 let money = START_MONEY;
 let collection = new Array(COLLECTION_SLOTS).fill(null);
-let players = {};             // latest players data from server (players[playerId] = {username, collection, money})
+let players = {};             // latest players data from server
 let activeSteals = {};        // { key: {thiefId, victimId, slot, progress, interval} }
 
 /* ========= DOM ========= */
@@ -127,7 +124,15 @@ const bgm = document.getElementById('bgm');
 
 /* ======= HELPERS ======= */
 function safeSend(obj){
-  if(ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  try{
+    if(ws && ws.readyState === WebSocket.OPEN && typeof ws.send === 'function'){
+      ws.send(JSON.stringify(obj));
+    } else {
+      console.warn('safeSend blocked (socket not open)', obj, 'ws=', ws && ws.readyState);
+    }
+  } catch(err){
+    console.error('safeSend error', err, obj);
+  }
 }
 function setStatus(s){ statusEl.textContent = s; }
 function fmt(n){ return Math.floor(n*100)/100; }
@@ -153,29 +158,34 @@ let reconnectTimer = null;
 function connectWS(){
   if(ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   setStatus('Connecting...');
+  console.log('connecting to', WS_URL);
   ws = new WebSocket(WS_URL);
+
   ws.addEventListener('open', ()=> {
     setStatus('Connected');
-    connected = true;
+    console.log('ws open — joined room:', roomCode, 'username:', username);
     safeSend({ type:'joinRoom', username, roomCode });
-    // send initial update so server has our state
     safeSend({ type:'update', collection, money });
   });
+
   ws.addEventListener('message', ev => {
     let data;
     try { data = JSON.parse(ev.data); } catch(e){ console.warn('invalid JSON', e); return; }
     handleMessage(data);
   });
+
   ws.addEventListener('close', ()=> {
     setStatus('Disconnected — attempting reconnect...');
-    connected = false;
-    // clear active steals UI (they will re-sync)
-    Object.keys(activeSteals).forEach(k => stopStealUI(activeSteals[k]));
+    console.warn('ws closed — will reconnect');
+    // clear active steals UI (they will re-sync when server is back)
+    Object.keys(activeSteals).forEach(k => {
+      try { stopSteal(activeSteals[k]); } catch(e){ console.warn('stopSteal error', e); }
+    });
     activeSteals = {};
-    // attempt reconnect after a short delay
     clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(()=> connectWS(), 2500);
   });
+
   ws.addEventListener('error', (err)=> {
     console.error('WebSocket error', err);
     setStatus('Connection error');
@@ -185,13 +195,9 @@ function connectWS(){
 /* ========= SERVER MESSAGE HANDLER ========= */
 function handleMessage(msg){
   if(msg.type === 'roomUpdate'){
-    // server includes "you" id for each client receive
     if(!playerId && msg.you) playerId = msg.you;
     players = msg.players || {};
-    // If server gave us players, also update our local copies if missing
-    // If server has our player record, load its collection & money (first join)
     if(playerId && players[playerId]) {
-      // adopt server-side if our local is empty (this ensures saved loads still work)
       if(!collection.some(Boolean) && players[playerId].collection) {
         collection = players[playerId].collection.slice();
         money = players[playerId].money ?? money;
@@ -202,9 +208,7 @@ function handleMessage(msg){
     renderPlayerList();
   }
 
-  // event-style messages (optional)
   if(msg.type === 'buy' && msg.itemId) {
-    // remove walker locally if exists
     const id = msg.itemId;
     document.querySelectorAll('.walker').forEach(w => { if(w.dataset.id === id) w.remove(); });
   }
@@ -212,7 +216,6 @@ function handleMessage(msg){
   if(msg.type === 'stealStart'){
     startSteal(msg.thiefId, msg.victimId, msg.slot);
     if(msg.victimId === playerId) {
-      // show text warning
       alert(`SOMEONE IS STEALING YOUR SLOT ${msg.slot} — press any arrow key to block`);
     }
   }
@@ -223,7 +226,6 @@ function handleMessage(msg){
   }
 
   if(msg.type === 'stealSuccess'){
-    // server already transferred item on server copy; request updated room state arrives via broadcast
     stopSteal({ thiefId: msg.thiefId, victimId: msg.victimId, slot: msg.slot });
     if(msg.victimId === playerId) alert('One of your items was stolen!');
     if(msg.thiefId === playerId) alert('You stole an item!');
@@ -234,8 +236,7 @@ function handleMessage(msg){
 function updateMoneyUI(){ moneyVal.textContent = fmt(money); }
 function renderPlayerList(){
   playerNames.innerHTML = '';
-  const keys = Object.keys(players);
-  keys.forEach(id => {
+  Object.keys(players).forEach(id => {
     const div = document.createElement('div');
     div.textContent = (players[id].username || 'player') + (id===playerId ? ' (You)' : '');
     playerNames.appendChild(div);
@@ -260,7 +261,6 @@ function renderPlayersAndCollections(){
     for(let i=0;i<COLLECTION_SLOTS;i++){
       const slot = document.createElement('div');
       slot.className = 'slot';
-      // placeholder when empty
       if(pdata.collection && pdata.collection[i]){
         const it = pdata.collection[i];
         const img = document.createElement('img');
@@ -275,19 +275,15 @@ function renderPlayersAndCollections(){
         bar.style.width = '0%';
         slot.appendChild(bar);
 
-        // stealing: only allow clicking other players' slots to start steal
         if(pid !== playerId){
           slot.addEventListener('click', ()=> {
-            // start steal by telling server
             safeSend({ type:'stealStart', victimId: pid, slot: i });
           });
         } else {
-          // your own slot: allow hold-to-sell (mouse down 5s)
           let holdTimer = null;
           slot.addEventListener('mousedown', (e)=>{
-            if(e.button !== 0) return; // left click only for sell hold we will use right-click alternative too
+            if(e.button !== 0) return;
             holdTimer = setTimeout(()=>{
-              // sell
               collection[i] = null;
               safeSend({ type:'update', collection, money });
               renderPlayersAndCollections();
@@ -295,8 +291,6 @@ function renderPlayersAndCollections(){
           });
           slot.addEventListener('mouseup', ()=> { clearTimeout(holdTimer); });
           slot.addEventListener('mouseleave', ()=> { clearTimeout(holdTimer); });
-
-          // also support right-click to sell immediately (context menu)
           slot.addEventListener('contextmenu', e=>{
             e.preventDefault();
             collection[i] = null;
@@ -306,7 +300,6 @@ function renderPlayersAndCollections(){
         }
 
       } else {
-        // empty placeholder
         slot.style.background = '#101820';
       }
       slots.appendChild(slot);
@@ -318,7 +311,6 @@ function renderPlayersAndCollections(){
 
 /* ========= Walkers: spawn & buy ========= */
 function spawnWalker(){
-  // rarities
   const rarities = [
     { id:'common', label:'Common', cost:10, mps:1, tint:'rgba(255,255,255,0.06)' },
     { id:'uncommon', label:'Uncommon', cost:25, mps:3, tint:'rgba(0,255,120,0.08)' },
@@ -354,7 +346,6 @@ function spawnWalker(){
 
   road.appendChild(el);
 
-  // animate
   let x = -80;
   const speed = 0.6 + Math.random()*0.9;
   function step(){
@@ -372,24 +363,15 @@ function attemptBuy(el){
   if(money < cost) { showToast('Not enough money'); return; }
   const slotIndex = collection.findIndex(s => !s);
   if(slotIndex === -1){ showToast('Collection full — sell something'); return; }
-  // deduct
   money -= cost; updateMoneyUI();
   collection[slotIndex] = { type: el.dataset.type, rarity: el.dataset.rarity, mps: Number(el.dataset.mps) || Number(el.dataset.mps) };
   renderPlayersAndCollections();
-  // inform server — guarded
   safeSend({ type:'buy', slot: slotIndex, item: collection[slotIndex], itemId: el.dataset.id });
-  // also send update to save local server state
   safeSend({ type:'update', collection, money });
-  // remove locally (server will broadcast too)
   el.remove();
 }
 
-/* helper toast */
-function showToast(text){
-  console.log('TOAST:', text);
-}
-
-/* spawn loop */
+function showToast(text){ console.log('TOAST:', text); }
 setInterval(spawnWalker, 1800);
 
 /* ========= Money tick (only from YOUR collection) ========= */
@@ -402,35 +384,26 @@ setInterval(()=>{
     money += inc;
     updateMoneyUI();
   }
-  // send current state to server if connected
-  if(ws && ws.readyState === WebSocket.OPEN){
-    safeSend({ type:'update', collection, money });
-  }
+  // send current state to server if connected (safeSend will guard)
+  safeSend({ type:'update', collection, money });
 }, 1000);
 
 /* ========= Steal system (server-synced) ========= */
 function startSteal(thiefId, victimId, slot){
-  // create key
   const key = victimId + '_' + slot;
-  if(activeSteals[key]) return; // already active
+  if(activeSteals[key]) return;
   activeSteals[key] = { thiefId, victimId, slot, progress:0, interval:null };
-
-  // find corresponding bar element
   const idx = getPlayerIndex(victimId);
   if(idx === -1) return;
   const collectionDiv = document.querySelectorAll('#collectionsRow .collection')[idx];
   if(!collectionDiv) return;
   const bar = collectionDiv.querySelectorAll('.slot')[slot]?.querySelector('.stealBar');
   if(!bar) return;
-
-  // tick
   activeSteals[key].interval = setInterval(()=>{
     activeSteals[key].progress += 1;
     bar.style.width = (activeSteals[key].progress * 100 / 15) + '%';
-    // optionally broadcast progress to others (server currently handles start/block/success events)
     if(activeSteals[key].progress >= 15){
       clearInterval(activeSteals[key].interval);
-      // notify server of success (server will transfer and broadcast)
       safeSend({ type:'stealSuccess', victimId, slot });
       delete activeSteals[key];
     }
@@ -438,14 +411,13 @@ function startSteal(thiefId, victimId, slot){
 }
 
 function stopSteal(detail){
-  // detail can be object {thiefId, victimId, slot} or key
   const victimId = detail.victimId || (detail.split ? detail.split('_')[0] : null);
   const slot = detail.slot || (detail.split ? detail.split('_')[1] : null);
+  if(!victimId) return;
   const key = victimId + '_' + slot;
   const entry = activeSteals[key];
   if(entry){
     clearInterval(entry.interval);
-    // reset UI bar
     const idx = getPlayerIndex(victimId);
     if(idx !== -1){
       const collectionDiv = document.querySelectorAll('#collectionsRow .collection')[idx];
@@ -456,15 +428,9 @@ function stopSteal(detail){
   }
 }
 
-/* when server tells us to start/stop steal, we call startSteal / stopSteal */
-function startStealUI(thiefId, victimId, slot){
-  safeSend({ type:'stealStart', victimId, slot }); // not used locally; server also broadcasts to others
-}
-
 /* keyboard defense: if victim presses arrow, send stealBlocked */
 document.addEventListener('keydown', e=>{
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
-    // find any active steals where we are the victim
     Object.keys(activeSteals).forEach(k => {
       const entry = activeSteals[k];
       if(entry && entry.victimId === playerId){
@@ -486,68 +452,42 @@ function getPlayerIndex(pid){
 }
 
 /* ========= Render helpers & player list update ========= */
-function renderPlayersAndCollections(){ // override earlier definition to use the same element class names
+function renderPlayersAndCollections(){ /* simplified re-render to keep in sync with server players state */
   collectionsRow.innerHTML = '';
   const ids = Object.keys(players);
   ids.forEach(pid => {
     const pdata = players[pid];
-    const col = document.createElement('div');
-    col.className = 'collection';
-    const name = document.createElement('div');
-    name.className = 'usernameLabel';
+    const col = document.createElement('div'); col.className = 'collection';
+    const name = document.createElement('div'); name.className = 'usernameLabel';
     name.textContent = (pdata.username || 'player') + (pid===playerId ? ' (You)' : '');
     col.appendChild(name);
-
-    const slots = document.createElement('div');
-    slots.className = 'slots';
+    const slots = document.createElement('div'); slots.className = 'slots';
     for(let i=0;i<COLLECTION_SLOTS;i++){
       const slot = document.createElement('div'); slot.className = 'slot';
       if(pdata.collection && pdata.collection[i]){
         const it = pdata.collection[i];
-        const img = document.createElement('img');
-        img.src = it.type === 'spermbob' ? 'spermbob.png' : 'bellbob.png';
+        const img = document.createElement('img'); img.src = it.type === 'spermbob' ? 'spermbob.png' : 'bellbob.png';
         slot.appendChild(img);
-        const lab = document.createElement('div'); lab.className = 'slotLabel';
-        lab.textContent = `${it.rarity} $${it.mps}/s`;
+        const lab = document.createElement('div'); lab.className = 'slotLabel'; lab.textContent = `${it.rarity} $${it.mps}/s`;
         slot.appendChild(lab);
         const bar = document.createElement('div'); bar.className = 'stealBar'; bar.style.width='0%';
         slot.appendChild(bar);
-
         if(pid !== playerId){
-          slot.addEventListener('click', ()=> {
-            safeSend({ type:'stealStart', victimId: pid, slot: i });
-          });
+          slot.addEventListener('click', ()=> { safeSend({ type:'stealStart', victimId: pid, slot: i }); });
         } else {
-          // your slot: hold to sell for 5s
           let hold = null;
-          slot.addEventListener('mousedown', (e)=>{
-            if(e.button !== 0) return;
-            hold = setTimeout(()=> {
-              collection[i] = null;
-              safeSend({ type:'update', collection, money });
-              renderPlayersAndCollections();
-            }, 5000);
-          });
+          slot.addEventListener('mousedown', (e)=>{ if(e.button!==0) return; hold = setTimeout(()=>{ collection[i]=null; safeSend({ type:'update', collection, money }); renderPlayersAndCollections(); }, 5000); });
           slot.addEventListener('mouseup', ()=> clearTimeout(hold));
           slot.addEventListener('mouseleave', ()=> clearTimeout(hold));
           slot.addEventListener('contextmenu', e=>{ e.preventDefault(); collection[i]=null; safeSend({ type:'update', collection, money }); renderPlayersAndCollections(); });
         }
-      } else {
-        slot.style.background = '#10151a';
-      }
+      } else slot.style.background = '#10151a';
       slots.appendChild(slot);
     }
     col.appendChild(slots);
     collectionsRow.appendChild(col);
   });
-
-  // update player list block
-  playerNames.innerHTML = '';
-  Object.keys(players).forEach(pid => {
-    const d = document.createElement('div');
-    d.textContent = (players[pid].username || 'player') + (pid===playerId ? ' (You)' : '');
-    playerNames.appendChild(d);
-  });
+  renderPlayerList();
 }
 
 /* ========= Buttons: save/load/reset ========= */
@@ -566,7 +506,7 @@ document.getElementById('resetBtn').addEventListener('click', ()=>{
   }
 });
 
-/* host/join UI — they just set the room code field (server handles join via join modal) */
+/* host/join UI */
 createRoomBtn.addEventListener('click', ()=> {
   const code = Math.random().toString(36).slice(2,6);
   roomCodeField.value = code; roomInput.value = code;
@@ -575,11 +515,9 @@ joinRoomBtn.addEventListener('click', ()=> {
   const code = roomCodeField.value.trim() || roomInput.value.trim();
   if(!code) return alert('enter room code');
   roomInput.value = code; roomCode = code;
-  // if already connected, send join request (useful for switching rooms)
   if(ws && ws.readyState === WebSocket.OPEN){
     safeSend({ type:'joinRoom', username, roomCode: code });
   } else {
-    // else ensure modal is closed and connect will use existing roomInput on initial join
     usernameScreen.style.display='none';
     connectWS();
   }
@@ -593,3 +531,4 @@ setStatus('Waiting for user to join...');
 </script>
 </body>
 </html>
+

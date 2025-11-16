@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Steal a Spermbob</title>
+<style>
+  :root{--bg:#111;--panel:#0f1720;--accent:#7c3aed}
+  body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial;background:linear-gradient(#0b1220,#081018);color:#e6eef8}
+  .topbar{display:flex;gap:12px;align-items:center;padding:12px;background:rgba(0,0,0,0.25);backdrop-filter:blur(6px)}
+  .money{font-weight:700;font-size:20px}
+  .game{display:flex;gap:12px;padding:12px}
+  .left{flex:1;background:rgba(255,255,255,0.03);border-radius:10px;overflow:hidden;position:relative;height:420px}
+  .road{position:absolute;inset:0;background:linear-gradient(#123,#0b1);}
+  .lane{position:absolute;left:0;right:0;top:70px;height:60px}
+  .lane:nth-child(2){top:160px;height:80px}
+  .sprite{position:absolute;display:flex;flex-direction:column;align-items:center;cursor:pointer;user-select:none}
+  .sprite img{width:64px;height:64px;display:block}
+  .tag{pointer-events:none;padding:2px 6px;border-radius:6px;margin-top:4px;font-size:12px;background:rgba(0,0,0,0.5)}
+  .tint{position:absolute;left:0;top:0;width:64px;height:64px;border-radius:6px;mix-blend-mode:multiply;pointer-events:none}
+  .right{width:360px}
+  .panel{background:rgba(255,255,255,0.03);padding:12px;border-radius:10px;margin-bottom:12px}
+  .collection{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .slot{height:90px;border-radius:8px;background:rgba(0,0,0,0.25);display:flex;align-items:center;justify-content:center;position:relative}
+  .slot img{max-width:72px;max-height:72px}
+  .progress{position:absolute;left:0;bottom:0;height:6px;background:linear-gradient(90deg,#4ade80,#60a5fa);width:0%}
+  .controls{display:flex;gap:8px;flex-wrap:wrap}
+  button,input{padding:8px;border-radius:8px;border:0;background:#0b1220;color:#e6eef8}
+  textarea{width:100%;height:80px}
+  .popup{position:fixed;left:50%;top:16px;transform:translateX(-50%);background:#831843;padding:12px;border-radius:8px;color:white;display:none}
+  .info{font-size:13px;color:#cfe3ff}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="money">Money: $<span id="money">0</span></div>
+  <div class="info">Income/sec: $<span id="income">0</span></div>
+  <div style="margin-left:auto">Audio: <input id="audioToggle" type="checkbox" checked></div>
+</div>
+<div class="game">
+  <div class="left" id="playArea">
+    <div class="lane" style="top:40px"></div>
+    <div class="lane" style="top:160px"></div>
+    <div id="sprites"></div>
+  </div>
+  <div class="right">
+    <div class="panel">
+      <h3>Collection (8 slots)</h3>
+      <div class="collection" id="collection"></div>
+      <div style="margin-top:8px" class="info">Hold left mouse on a collection item for 5s to sell it. Hold on another player's item for 15s to attempt to steal.</div>
+    </div>
+    <div class="panel">
+      <h3>Save / Load</h3>
+      <div class="controls">
+        <button id="saveBtn">Save</button>
+        <button id="loadBtn">Load</button>
+        <button id="resetBtn">Reset</button>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>Multiplayer (P2P manual signaling)</h3>
+      <div class="info">To connect: Host clicks "Create Offer" and shares the Offer text with a friend who pastes it into "Remote Offer" then clicks "Answer" and returns the Answer text back to the Host. This is basic P2P with manual copy/paste signaling.</div>
+      <div style="margin-top:8px">
+        <button id="createOffer">Create Offer (Host)</button>
+        <button id="createAnswer">Answer Offer (Join)</button>
+      </div>
+      <div style="margin-top:8px">
+        <textarea id="signalOut" readonly placeholder="Offer / Answer will appear here"></textarea>
+        <textarea id="signalIn" placeholder="Paste remote Offer/Answer here"></textarea>
+        <div><button id="applySignal">Apply Remote Text</button></div>
+      </div>
+      <div style="margin-top:8px">Status: <span id="peerStatus">Not connected</span></div>
+    </div>
+  </div>
+</div>
+<div class="popup" id="popup"></div>
+<audio id="bgm" loop src="bgm.mp3"></audio>
+<script>
+/* --- Game data & utils --- */
+const RARITIES = [
+  {id:'common',label:'Common',cost:10,mps:0.5,color:'rgba(255,255,255,0.15)'},
+  {id:'uncommon',label:'Uncommon',cost:50,mps:2,color:'rgba(60,179,113,0.25)'},
+  {id:'rare',label:'Rare',cost:200,mps:8,color:'rgba(0,112,255,0.25)'},
+  {id:'epic',label:'Epic',cost:1000,mps:50,color:'rgba(180,0,255,0.25)'}
+];
+
+const SPRITES = [
+  {file:'spermbob.png',type:'spermbob'},
+  {file:'bellbob.png',type:'bellbob'}
+];
+
+let money = 100;
+let collection = new Array(8).fill(null);
+let spritesOnRoad = [];
+let incomePerSec = 0;
+let lastTick = Date.now();
+let stealInProgress = {};
+
+/* --- DOM --- */
+const moneyEl = document.getElementById('money');
+const incomeEl = document.getElementById('income');
+const spritesContainer = document.getElementById('sprites');
+const collectionEl = document.getElementById('collection');
+const popup = document.getElementById('popup');
+const bgm = document.getElementById('bgm');
+const audioToggle = document.getElementById('audioToggle');
+
+audioToggle.addEventListener('change',()=>{ if(audioToggle.checked){bgm.play().catch(()=>{});}else{bgm.pause();}});
+if(audioToggle.checked) bgm.play().catch(()=>{});
+
+/* --- Helpers --- */
+function randRange(a,b){return Math.random()*(b-a)+a}
+function fmt(n){return Math.floor(n*100)/100}
+
+/* --- Road sprite generation --- */
+function spawnSprite(){
+  const lane = Math.random()<0.5?40:160;
+  const spr = SPRITES[Math.floor(Math.random()*SPRITES.length)];
+  const rarity = RARITIES[Math.floor(Math.random()*RARITIES.length)];
+  const id = Math.random().toString(36).slice(2,9);
+  const el = document.createElement('div'); el.className='sprite'; el.style.top=lane+'px';
+  el.innerHTML = `\n    <div style='position:relative'>\n      <img src='${spr.file}' draggable='false'/>\n      <div class='tint' style='background:${rarity.color};left:0;top:0'></div>\n    </div>\n    <div class='tag'>${rarity.label} — $${rarity.cost} — $${rarity.mps}/s</div>`;
+  spritesContainer.appendChild(el);
+  const obj = {id,el,x:-80,y:lane,type:spr.type,rarity};
+  el.style.left = obj.x+'px';
+  el.addEventListener('click',()=>buySprite(obj));
+  spritesOnRoad.push(obj);
+}
+
+function updateSprites(dt){
+  for(let i=spritesOnRoad.length-1;i>=0;i--){
+    const s = spritesOnRoad[i];
+    s.x += dt*0.04*(1 + Math.random()*0.6);
+    if(s.x > window.innerWidth+80){ s.el.remove(); spritesOnRoad.splice(i,1); }
+    else s.el.style.left = s.x+'px';
+  }
+}
+
+/* --- Buying & collection --- */
+function buySprite(s){
+  const cost = s.rarity.cost;
+  if(money < cost){ showPopup('Not enough money'); return; }
+  const slot = collection.findIndex(x=>x===null);
+  if(slot===-1){ showPopup('Collection full — sell something first'); return; }
+  money -= cost; updateMoney();
+  const item = {id:s.id,type:s.type,rarityId:s.rarity.id,rarityLabel:s.rarity.label,mps:s.rarity.mps,ownerId:localPeerId()};
+  collection[slot] = item; saveLocal(); renderCollection(); recalcIncome();
+  showPopup(`Bought ${item.rarityLabel} ${item.type}`);
+}
+
+function renderCollection(){
+  collectionEl.innerHTML='';
+  collection.forEach((item,idx)=>{
+    const slot = document.createElement('div'); slot.className='slot';
+    if(item){
+      const img = document.createElement('img'); img.src = item.type==='spermbob'?'spermbob.png':'bellbob.png';
+      slot.appendChild(img);
+      const tag = document.createElement('div'); tag.style.position='absolute'; tag.style.top='6px'; tag.style.left='6px'; tag.style.fontSize='11px'; tag.textContent=item.rarityLabel+' — $'+item.mps+'/s'; slot.appendChild(tag);
+      const tint = document.createElement('div'); tint.style.position='absolute'; tint.style.inset='0'; tint.style.background=getRarityColor(item.rarityId); tint.style.opacity='0.25'; slot.appendChild(tint);
+      // sell / steal hold handling
+      let holdTimer = null; let progress = null; let start = 0;
+      slot.addEventListener('mousedown',(ev)=>{
+        ev.preventDefault(); start = Date.now(); progress = document.createElement('div'); progress.className='progress'; slot.appendChild(progress);
+        holdTimer = setInterval(()=>{
+          const elapsed = Date.now()-start; const pct = Math.min(100,elapsed/50);
+          progress.style.width = pct+'%';
+          if(elapsed >= 5000){ // sell after 5s
+            clearInterval(holdTimer); progress.remove(); sellItem(idx); }
+        },100);
+      });
+      slot.addEventListener('mouseup',()=>{ if(holdTimer){ clearInterval(holdTimer); const p = slot.querySelector('.progress'); if(p) p.remove(); }});
+      slot.addEventListener('mouseleave',()=>{ if(holdTimer){ clearInterval(holdTimer); const p = slot.querySelector('.progress'); if(p) p.remove(); }});
+
+    } else {
+      slot.textContent = 'Empty';
+    }
+    collectionEl.appendChild(slot);
+  });
+}
+
+function sellItem(index){
+  const item = collection[index]; if(!item) return;
+  const sellVal = Math.max(1,Math.floor(item.mps*10));
+  money += sellVal; collection[index]=null; saveLocal(); renderCollection(); recalcIncome(); updateMoney();
+  showPopup('Sold for $'+sellVal);
+}
+
+function getRarityColor(id){
+  const r = RARITIES.find(x=>x.id===id); return r? r.color : 'rgba(255,255,255,0.05)';
+}
+
+/* --- Income tick --- */
+function recalcIncome(){ incomePerSec = collection.reduce((s,i)=>i?s+i.mps:s,0); incomeEl.textContent = fmt(incomePerSec); }
+
+function updateMoney(){ moneyEl.textContent = fmt(money); }
+
+function gameTick(){
+  const now = Date.now(); const dt = now - lastTick; lastTick = now;
+  updateSprites(dt);
+  // money accrual
+  money += incomePerSec * (dt/1000);
+  updateMoney();
+  requestAnimationFrame(gameTick);
+}
+
+/* --- Saving --- */
+function saveLocal(){ localStorage.setItem('spermbob_save', JSON.stringify({money,collection})); }
+function loadLocal(){ const d = JSON.parse(localStorage.getItem('spermbob_save')||'null'); if(d){ money=d.money; collection=d.collection; updateMoney(); renderCollection(); recalcIncome(); showPopup('Loaded save'); } else showPopup('No save found'); }
+function resetGame(){ if(confirm('Reset save?')){ money=100; collection=new Array(8).fill(null); saveLocal(); renderCollection(); recalcIncome(); updateMoney(); showPopup('Reset'); }}
+
+/* --- Popup --- */
+let popupTimer=null;
+function showPopup(text,timeout=2500){ popup.style.display='block'; popup.textContent=text; if(popupTimer) clearTimeout(popupTimer); popupTimer=setTimeout(()=>{popup.style.display='none';},timeout); }
+
+/* --- Controls --- */
+document.getElementById('saveBtn').addEventListener('click',()=>{ saveLocal(); showPopup('Saved locally'); });
+document.getElementById('loadBtn').addEventListener('click',()=>{ loadLocal(); });
+document.getElementById('resetBtn').addEventListener('click',()=>{ resetGame(); });
+
+/* spawn loop */
+setInterval(spawnSprite,1500);
+setInterval(()=>{ saveLocal(); },15000);
+renderCollection(); recalcIncome(); updateMoney(); requestAnimationFrame(gameTick);
+
+/* --- Multiplayer P2P using WebRTC DataChannel with manual signaling --- */
+let pc = null; let dc = null; const peerStatus = document.getElementById('peerStatus');
+function localPeerId(){ let id = localStorage.getItem('peer_id'); if(!id){ id = Math.random().toString(36).slice(2,9); localStorage.setItem('peer_id',id);} return id; }
+
+function createPeer(isHost){
+  pc = new RTCPeerConnection({iceServers:[{urls:['stun:stun.l.google.com:19302']}]});
+  pc.onicecandidate = e=>{ if(e.candidate) { /* candidates are automatically included in sdp */ } };
+  pc.ondatachannel = ev=>{ dc = ev.channel; setupDC(); };
+  if(isHost){ dc = pc.createDataChannel('game'); setupDC(); }
+}
+function setupDC(){
+  dc.onopen = ()=>{ peerStatus.textContent = 'Connected'; showPopup('P2P connected'); };
+  dc.onmessage = ev=>{ handlePeerMessage(JSON.parse(ev.data)); };
+  dc.onclose = ()=>{ peerStatus.textContent='Disconnected'; };
+}
+
+async function createOffer(){ createPeer(true); const offer = await pc.createOffer(); await pc.setLocalDescription(offer); document.getElementById('signalOut').value = JSON.stringify(pc.localDescription); }
+async function applyRemoteSDP(text){ try{ const obj = JSON.parse(text); if(obj.type==='offer'){ createPeer(false); await pc.setRemoteDescription(obj); const answer = await pc.createAnswer(); await pc.setLocalDescription(answer); document.getElementById('signalOut').value = JSON.stringify(pc.localDescription); } else if(obj.type==='answer'){ await pc.setRemoteDescription(obj); } else { showPopup('Unknown SDP'); } }catch(e){ alert('Invalid text'); }}
+
+document.getElementById('createOffer').addEventListener('click',()=>createOffer());
+document.getElementById('createAnswer').addEventListener('click',()=>{ createPeer(false); alert('Paste remote offer into the box and click Apply Remote Text'); });
+document.getElementById('applySignal').addEventListener('click',()=>{ const text = document.getElementById('signalIn').value.trim(); if(!text) return; applyRemoteSDP(text); });
+
+function sendToPeer(msg){ if(dc && dc.readyState==='open') dc.send(JSON.stringify(msg)); }
+
+function handlePeerMessage(msg){
+  if(msg.type==='sync_request'){ // peer asks for our collection
+    sendToPeer({type:'sync_response',money:money,collection});
+  } else if(msg.type==='sync_response'){ // peer responded
+    showPopup('Received peer collection — now you can attempt steals on their slots'); window.remoteCollection = msg.collection; window.remotePeerId = msg.peerId || 'remote';
+  } else if(msg.type==='steal_start'){ // someone is stealing one of our items
+    const idx = msg.slot;
+    showStealWarning(idx,msg.attackerId,msg.itemLabel);
+  } else if(msg.type==='steal_result'){ if(msg.success){ showPopup('One of your items was stolen!'); // remove item
+      // find matching item in collection and remove
+      const idx = collection.findIndex(it=>it && it.id===msg.itemId); if(idx!==-1){ collection[idx]=null; renderCollection(); recalcIncome(); saveLocal(); }
+    } else { showPopup('You defended the theft!'); }
+  } else if(msg.type==='transfer_item'){ // receive stolen item
+    const item = msg.item; const slot = collection.findIndex(x=>x===null); if(slot!==-1){ collection[slot]=item; showPopup('Stole '+item.rarityLabel+' '+item.type); renderCollection(); recalcIncome(); saveLocal(); } else { showPopup('Received item but collection full — it was dropped'); }
+  }
+}
+
+/* --- Stealing mechanics (host can request remote's collection via sync) --- */
+// Basic UI to let host request remote collection
+const askBtn = document.createElement('button'); askBtn.textContent='Request Remote Collection'; askBtn.onclick=()=>{ sendToPeer({type:'sync_request',peerId:localPeerId()}); showPopup('Requested remote collection'); }; document.querySelector('.right .panel').appendChild(askBtn);
+
+// Allow clicking remote slots to attempt steal
+document.addEventListener('click',(e)=>{});
+
+// We'll add a simple UI overlay to show remote collection when available
+function showRemoteCollectionUI(){
+  let rc = document.getElementById('remoteCollectionPanel'); if(rc) rc.remove();
+  if(!window.remoteCollection) return;
+  rc = document.createElement('div'); rc.id='remoteCollectionPanel'; rc.className='panel'; rc.style.marginTop='12px'; rc.innerHTML='<h3>Remote Collection</h3>';
+  const grid = document.createElement('div'); grid.style.display='grid'; grid.style.gridTemplateColumns='repeat(4,1fr)'; grid.style.gap='8px';
+  window.remoteCollection.forEach((item,idx)=>{
+    const slot = document.createElement('div'); slot.className='slot'; slot.style.height='80px';
+    if(item){ const img = document.createElement('img'); img.src = item.type==='spermbob'?'spermbob.png':'bellbob.png'; slot.appendChild(img);
+      const tag = document.createElement('div'); tag.style.position='absolute'; tag.style.top='6px'; tag.style.left='6px'; tag.style.fontSize='11px'; tag.textContent=item.rarityLabel+' — $'+item.mps+'/s'; slot.appendChild(tag);
+      const tint = document.createElement('div'); tint.style.position='absolute'; tint.style.inset='0'; tint.style.background=getRarityColor(item.rarityId); tint.style.opacity='0.25'; slot.appendChild(tint);
+      // handle hold to steal
+      let start=0, timer=null, progress=null;
+      slot.addEventListener('mousedown',()=>{
+        start=Date.now(); progress=document.createElement('div'); progress.className='progress'; slot.appendChild(progress);
+        timer = setInterval(()=>{
+          const elapsed = Date.now()-start; progress.style.width = Math.min(100,elapsed/150)+'%';
+          if(elapsed>=15000){ clearInterval(timer); progress.remove(); attemptSteal(idx,item); }
+        },200);
+      });
+      slot.addEventListener('mouseup',()=>{ if(timer){ clearInterval(timer); const p=slot.querySelector('.progress'); if(p) p.remove(); }});
+      slot.addEventListener('mouseleave',()=>{ if(timer){ clearInterval(timer); const p=slot.querySelector('.progress'); if(p) p.remove(); }});
+    } else slot.textContent='Empty';
+    grid.appendChild(slot);
+  });
+  rc.appendChild(grid);
+  document.querySelector('.right').appendChild(rc);
+}
+
+// attemptSteal sends steal_start to owner; owner will be alerted and must press arrow keys
+function attemptSteal(slot,item){ if(!dc || dc.readyState!=='open'){ showPopup('Not connected to peer'); return; }
+  showPopup('Attempting to steal... hold until result'); sendToPeer({type:'steal_start',slot,attackerId:localPeerId(),itemLabel:item.rarityLabel+' '+item.type,itemId:item.id});
+  // wait for result; remote will send steal_result or transfer_item
+}
+
+// owner UI: show popup and arrow-mini-game
+function showStealWarning(slot,attackerId,itemLabel){ // display popup with arrow sequence and wait
+  const seq = generateArrowSeq(4);
+  let keysPressed = '';
+  let timeLeft=15000; popup.style.display='block'; popup.textContent = 'SOMEONE IS STEALING YOUR '+itemLabel+'! Press sequence: '+seq.join(' ');
+  const start = Date.now(); const handler = (ev)=>{
+    const key = arrowFromKey(ev.key); if(!key) return; keysPressed += key; if(keysPressed.endsWith(seq.join(''))){ // defended
+      document.removeEventListener('keydown',handler); popup.style.display='none'; sendToPeer({type:'steal_result',success:false}); showPopup('You stopped the steal!'); }
+  };
+  document.addEventListener('keydown',handler);
+  setTimeout(()=>{
+    document.removeEventListener('keydown',handler); popup.style.display='none'; // if not defended
+    sendToPeer({type:'steal_result',success:true,itemId:slot});
+  },15000);
+}
+
+function arrowFromKey(k){ if(k==='ArrowUp') return 'U'; if(k==='ArrowDown') return 'D'; if(k==='ArrowLeft') return 'L'; if(k==='ArrowRight') return 'R'; return '' }
+function generateArrowSeq(n){ const A=['U','D','L','R']; const seq=[]; for(let i=0;i<n;i++) seq.push(A[Math.floor(Math.random()*4)]); return seq; }
+
+// handle incoming steal_result responses: if attacker receives success=true then they should ask for transfer
+// Our handlePeerMessage handles transfer and steal_result already.
+
+// expose remote UI update when remoteCollection changes
+setInterval(()=>{ if(window.remoteCollection) showRemoteCollectionUI(); },1000);
+
+/* --- Init assets note --- */
+showPopup('Game loaded — place spermbob.png, bellbob.png and bgm.mp3 next to the HTML file.');
+
+</script>
+</body>
+</html>

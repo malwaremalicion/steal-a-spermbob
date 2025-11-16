@@ -60,9 +60,18 @@ document.getElementById('joinBtn').onclick = () => {
 
 function connect(){
     ws = new WebSocket('wss://spermbob-server.onrender.com');
-    ws.onopen = () => ws.send(JSON.stringify({ type:'joinRoom', username, roomCode }));
+    ws.onopen = () => {
+        ws.send(JSON.stringify({ 
+            type:'joinRoom', 
+            username, 
+            roomCode 
+        }));
+        console.log("Connected to Render WebSocket server");
+    };
     ws.onmessage = e => handleMessage(JSON.parse(e.data));
+    ws.onerror = err => console.error("WebSocket Error:", err);
 }
+
 
 function handleMessage(data){
     if(data.type==='roomUpdate'){

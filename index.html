@@ -113,23 +113,41 @@ function handle(msg){
 }
 
 // Render walkers from server list
+// Render walkers from server list (now smooth, persistent elements)
 function renderWalkers(){
-  road.innerHTML = '';
+  // Keep already-spawned walkers instead of clearing
+  const existing = {};
+
+  document.querySelectorAll('.walker').forEach(el => {
+    existing[el.dataset.id] = el;
+  });
+
   walkers.forEach(w => {
-    const el = document.createElement('div');
-    el.className = 'walker';
-    el.style.left = Math.random() * 60 + '%';
-    el.style.top = (20 + Math.random()*100) + 'px';
-    el.dataset.id = w.id;
-    el.dataset.cost = w.cost;
-    el.dataset.mps = w.mps;
-    el.dataset.type = w.type;
-    el.innerHTML = `<img src="${w.type==='bellbob' ? 'bellbob.png' : 'spermbob.png'}" style="width:40px;height:40px"><div style="color:#fff;font-size:12px">${w.rarity} $${w.cost}</div>`;
-    el.addEventListener('click', ()=> attemptBuy(w.id));
-    road.appendChild(el);
+    let el = existing[w.id];
+
+    if(!el){
+      // create walker once
+      el = document.createElement('div');
+      el.className = 'walker';
+      el.dataset.id = w.id;
+      el.dataset.cost = w.cost;
+      el.dataset.mps = w.mps;
+      el.dataset.type = w.type;
+
+      // random initial position
+      el._x = Math.random() * (road.clientWidth - 40);
+      el._y = 20 + Math.random()*100;
+
+      el.innerHTML = `
+        <img src="${w.type==='bellbob' ? 'bellbob.png' : 'spermbob.png'}">
+        <div style="color:#fff;font-size:12px">${w.rarity} $${w.cost}</div>
+      `;
+
+      el.addEventListener('click', ()=> attemptBuy(w.id));
+      road.appendChild(el);
+    }
   });
 }
-
 // Attempt buy: send only itemId + chosen slot (client asks for a free slot)
 function attemptBuy(itemId){
   // pick a free slot in our local players copy (server authoritative will confirm)
@@ -476,28 +494,25 @@ function beginBuyWalker(w) {
 
     }, HOLD_TIME);
 }
+// Smooth walker movement
+function animateWalkers(){
+  const all = document.querySelectorAll('.walker');
+  all.forEach(el => {
+    // drift speed
+    const speed = 0.3;
 
-// LOOP
-let lastTime = performance.now();
-function loop(t) {
-    const dt = (t - lastTime) / 1000;
-    lastTime = t;
+    el._x += speed;
 
-    walkers.forEach(w => {
-        w.x += w.speed * dt;
-        w.el.style.transform = `translateX(${w.x}px)`;
+    // wrap around screen
+    if(el._x > road.clientWidth) el._x = -40;
 
-        if (w.x > window.innerWidth + 200) {
-            w.el.remove();
-        }
-    });
+    el.style.left = el._x + "px";
+    el.style.top = el._y + "px";
+  });
 
-    requestAnimationFrame(loop);
+  requestAnimationFrame(animateWalkers);
 }
-requestAnimationFrame(loop);
-
-// Spawn walkers endlessly
-setInterval(spawnWalker, 2000);
+requestAnimationFrame(animateWalkers);
 </script>
 </body>
 </html>

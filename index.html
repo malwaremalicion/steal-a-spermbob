@@ -11,7 +11,7 @@ body{margin:0;font-family:Arial;background:#071018;color:#e6eef8}
 #main{display:flex;gap:12px;padding:12px}
 #left{flex:1;background:linear-gradient(#05202b,#021018);padding:12px;border-radius:8px}
 #road{height:180px;background:linear-gradient(#0b2630,#041018);position:relative;overflow:hidden;border-radius:6px}
-.walker{position:absolute;display:flex;flex-direction:column;align-items:center;cursor:pointer;transition:left 0.3s linear,top 0.3s linear}
+.walker{position:absolute;display:flex;flex-direction:column;align-items:center;cursor:pointer;transition:left linear}
 .walker img{width:40px;height:40px}
 #right{width:360px}
 .panel{background:rgba(255,255,255,0.02);padding:12px;border-radius:8px;margin-bottom:12px}
@@ -42,6 +42,8 @@ body{margin:0;font-family:Arial;background:#071018;color:#e6eef8}
   </div>
 </div>
 
+<audio id="bgm" src="bgm.mp3" loop autoplay></audio>
+
 <script>
 const WS_URL = 'wss://spermbob-server-production.up.railway.app';
 const SELL_HOLD_MS = 5000;
@@ -59,6 +61,7 @@ const roomLabel=document.getElementById('roomLabel');
 const joinBtn=document.getElementById('join');
 const roomCodeInp=document.getElementById('roomCode');
 const collectionsDiv=document.getElementById('collections');
+const bgm=document.getElementById('bgm');
 
 joinBtn.addEventListener('click',()=>{ 
   roomCode=roomCodeInp.value.trim()||'lobby'; 
@@ -66,9 +69,8 @@ joinBtn.addEventListener('click',()=>{
   connect(); 
 });
 
+// WebSocket with reconnect
 function setStatus(s){ statusEl.textContent=s; }
-
-// Reconnect with exponential backoff
 function connect(){
   if(ws && (ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING)) return;
   setStatus('Connecting...');
@@ -88,7 +90,7 @@ function connect(){
   });
 
   ws.addEventListener('close',()=>{ 
-    setStatus('Disconnected, retrying...'); 
+    setStatus('Disconnected, retrying...');
     ws=null;
     setTimeout(connect, Math.min(1000 * 2**reconnectAttempts, 30000));
     reconnectAttempts++;
@@ -103,45 +105,11 @@ function handle(msg){
     players=msg.players||{};
     myId=msg.you||myId;
     moneyVal.textContent=(myId&&players[myId])?Math.floor(players[myId].money||0):moneyVal.textContent;
-    updateWalkers(msg.walkers||[]);
     renderCollections();
   }
 }
 
-// Smooth walkers
-function updateWalkers(serverWalkers){
-  const existingIds=new Set(Object.keys(walkers));
-  serverWalkers.forEach(w=>{
-    if(walkers[w.id]){
-      walkers[w.id].style.left=(20+Math.random()*60)+'%';
-      walkers[w.id].style.top=(20+Math.random()*140)+'px';
-    } else {
-      const el=document.createElement('div');
-      el.className='walker';
-      el.dataset.id=w.id;
-      el.dataset.cost=w.cost;
-      el.dataset.mps=w.mps;
-      el.dataset.type=w.type;
-      el.innerHTML=`<img src="${w.type==='bellbob'?'bellbob.png':'spermbob.png'}" style="width:40px;height:40px"><div style="color:#fff;font-size:12px">${w.rarity} $${w.cost}</div>`;
-      el.style.left=(20+Math.random()*60)+'%';
-      el.style.top=(20+Math.random()*140)+'px';
-      el.addEventListener('click',()=>attemptBuy(w.id));
-      road.appendChild(el);
-      walkers[w.id]=el;
-    }
-    existingIds.delete(w.id);
-  });
-  existingIds.forEach(id=>{ if(walkers[id]){ walkers[id].remove(); delete walkers[id]; } });
-}
-
-function attemptBuy(itemId){
-  if(!myId||!players[myId]){ alert('Not ready yet!'); return; }
-  const free=players[myId].collection?players[myId].collection.findIndex(x=>!x):0;
-  if(free===-1){ alert('No free slot'); return; }
-  ws.send(JSON.stringify({type:'buy',slot:free,itemId}));
-  if(walkers[itemId]){ walkers[itemId].remove(); delete walkers[itemId]; }
-}
-
+// Collections
 function renderCollections(){
   collectionsDiv.innerHTML='';
   Object.keys(players).forEach(id=>{
@@ -167,6 +135,7 @@ function renderCollections(){
   });
 }
 
+// Sell/Steal
 function attachHoldSell(el,slotIndex){
   let raf=null,start=null,bar=null;
   function tick(ts){ if(!start) start=ts; const pct=Math.min((ts-start)/SELL_HOLD_MS*100,100); bar.style.width=pct+'%'; if(pct>=100){ cancel(); ws.send(JSON.stringify({type:'sell',slot:slotIndex})); } else raf=requestAnimationFrame(tick); }
@@ -176,7 +145,6 @@ function attachHoldSell(el,slotIndex){
   el.addEventListener('mouseup',cancel); el.addEventListener('mouseleave',cancel);
   el.addEventListener('contextmenu',e=>{ e.preventDefault(); ws.send(JSON.stringify({type:'sell',slot:slotIndex})); });
 }
-
 function attachHoldSteal(el,slotIndex,victimId){
   let raf=null,start=null,bar=null;
   function tick(ts){ if(!start) start=ts; const pct=Math.min((ts-start)/STEAL_TIMEOUT_MS*100,100); bar.style.width=pct+'%'; if(pct>=100) cancel(); else raf=requestAnimationFrame(tick); }
@@ -186,16 +154,50 @@ function attachHoldSteal(el,slotIndex,victimId){
   el.addEventListener('mouseup',cancel); el.addEventListener('mouseleave',cancel);
 }
 
-// money update
+// Money update
 setInterval(()=>{ if(myId && players[myId]) moneyVal.textContent=Math.floor(players[myId].money||0); },500);
 
-// arrow key block
+// Arrow key block
 document.addEventListener('keydown',e=>{
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
     if(!myId) return;
     ws.send(JSON.stringify({type:'stealBlocked',victimId:myId,slot:null}));
   }
 });
+
+// WALKER SPAWNING LOGIC
+let walkerCounter=0;
+function spawnWalker(){
+  if(!ws || ws.readyState!==WebSocket.OPEN) return;
+  const wId='w'+Date.now()+'_'+walkerCounter++;
+  const el=document.createElement('div');
+  el.className='walker';
+  el.dataset.id=wId;
+  el.dataset.type=Math.random()<0.5?'bellbob':'spermbob';
+  el.dataset.rarity=Math.random()<0.5?'common':'rare';
+  el.dataset.cost=Math.floor(Math.random()*20)+10;
+  el.dataset.mps=Math.floor(Math.random()*5)+1;
+  el.style.top=(20+Math.random()*140)+'px';
+  el.style.left='-50px';
+  el.innerHTML=`<img src="${el.dataset.type==='bellbob'?'bellbob.png':'spermbob.png'}" style="width:40px;height:40px"><div style="color:#fff;font-size:12px">${el.dataset.rarity} $${el.dataset.cost}</div>`;
+  el.addEventListener('click',()=>attemptBuy(el.dataset.id));
+  road.appendChild(el);
+  walkers[el.dataset.id]=el;
+
+  // animate smoothly to right
+  const duration=5000; // 5s to cross
+  const start=performance.now();
+  function move(now){
+    const t=(now-start)/duration;
+    if(t>=1){ el.remove(); delete walkers[el.dataset.id]; return; }
+    el.style.left=(t*100)+'%';
+    requestAnimationFrame(move);
+  }
+  requestAnimationFrame(move);
+}
+
+// spawn a walker every second
+setInterval(spawnWalker,1000);
 </script>
 </body>
 </html>

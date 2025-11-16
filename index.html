@@ -42,9 +42,8 @@ let ws, playerId;
 let username, roomCode;
 let money = 30;
 let collection = Array(8).fill(null);
-let stealTarget = null;
-let stealProgress = 0;
-let stealInterval;
+let playersData = {};
+let activeSteals = {}; // {"victimId_slot": {progress:0, interval:null}}
 
 const playersCollections = document.getElementById('playersCollections');
 const road = document.getElementById('road');
@@ -60,7 +59,7 @@ document.getElementById('joinBtn').onclick = () => {
 }
 
 function connect(){
-    ws = new WebSocket('ws://localhost:8080');
+    ws = new WebSocket('wss://spermbob-server.onrender.com');
     ws.onopen = () => ws.send(JSON.stringify({ type:'joinRoom', username, roomCode }));
     ws.onmessage = e => handleMessage(JSON.parse(e.data));
 }
@@ -68,9 +67,22 @@ function connect(){
 function handleMessage(data){
     if(data.type==='roomUpdate'){
         if(!playerId) playerId = data.you;
-        renderPlayersCollections(data.players);
+        playersData = data.players;
+        renderPlayersCollections(playersData);
     } else if(data.type==='buy'){
         removeWalker(data.itemId);
+    } else if(data.type==='stealStart'){
+        startStealBar(data.thiefId, data.victimId, data.slot);
+        if(data.victimId===playerId) alert(`Someone is stealing your item in slot ${data.slot}! Press arrow keys to block!`);
+    } else if(data.type==='stealBlocked'){
+        stopStealBar(data.thiefId, data.victimId, data.slot);
+        if(data.victimId===playerId) alert('Steal blocked!');
+    } else if(data.type==='stealSuccess'){
+        stopStealBar(data.thiefId, data.victimId, data.slot);
+        alert('Item stolen!');
+        if(data.victimId===playerId){
+            collection[data.slot] = null; // remove stolen item
+        }
     }
 }
 
@@ -95,8 +107,16 @@ function renderPlayersCollections(players){
                 slot.appendChild(lab);
                 const bar = document.createElement('div'); bar.className='stealProgressBar';
                 slot.appendChild(bar);
-            } else {
-                slot.style.background = '#555';
+                if(id !== playerId){
+                    slot.onclick = ()=>ws.send(JSON.stringify({ type:'stealStart', victimId:id, slot:i }));
+                } else {
+                    slot.oncontextmenu = e=>{ // right click to sell
+                        e.preventDefault();
+                        collection[i]=null;
+                        ws.send(JSON.stringify({ type:'update', collection, money }));
+                        renderPlayersCollections(playersData);
+                    }
+                }
             }
             colDiv.appendChild(slot);
         }
@@ -143,6 +163,10 @@ function buy(div){
     div.remove();
 }
 
+function removeWalker(id){
+    document.querySelectorAll('.walker').forEach(w=>{ if(w.dataset.id===id) w.remove(); });
+}
+
 // --- Money per second ---
 setInterval(()=>{
     let total=0;
@@ -151,31 +175,54 @@ setInterval(()=>{
     ws.send(JSON.stringify({ type:'update', collection, money }));
 },1000);
 
-// --- Steal mechanic ---
-function stealItem(targetSlot){
-    stealTarget = targetSlot;
-    stealProgress = 0;
-    stealInterval = setInterval(()=>{
-        stealProgress += 1;
-        const bar = stealTarget.querySelector('.stealProgressBar');
-        if(bar) bar.style.width = (stealProgress*100/15)+'%';
-        if(stealProgress>=15){
-            clearInterval(stealInterval);
-            alert('Item stolen!');
-            stealTarget = null;
+// --- Multiplayer steal bar ---
+function startStealBar(thiefId, victimId, slot){
+    const key = victimId + '_' + slot;
+    if(activeSteals[key]) return;
+    activeSteals[key]={progress:0};
+    const bar = document.querySelectorAll('.collection')[getPlayerIndex(victimId)]
+                  .querySelectorAll('.slot')[slot].querySelector('.stealProgressBar');
+    activeSteals[key].interval = setInterval(()=>{
+        activeSteals[key].progress += 1;
+        if(bar) bar.style.width = (activeSteals[key].progress*100/15)+'%';
+        if(activeSteals[key].progress>=15){
+            clearInterval(activeSteals[key].interval);
+            ws.send(JSON.stringify({ type:'stealSuccess', victimId, slot }));
+            delete activeSteals[key];
         }
     },1000);
 }
 
+function stopStealBar(thiefId, victimId, slot){
+    const key = victimId + '_' + slot;
+    if(activeSteals[key]){
+        clearInterval(activeSteals[key].interval);
+        const bar = document.querySelectorAll('.collection')[getPlayerIndex(victimId)]
+                      .querySelectorAll('.slot')[slot].querySelector('.stealProgressBar');
+        if(bar) bar.style.width='0%';
+        delete activeSteals[key];
+    }
+}
+
 document.addEventListener('keydown', e=>{
     if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
-        if(stealTarget!==null){
-            clearInterval(stealInterval);
-            stealTarget = null;
-            alert('Steal blocked!');
+        for(const key in activeSteals){
+            const [victimId, slot] = key.split('_');
+            if(victimId===playerId){
+                ws.send(JSON.stringify({ type:'stealBlocked', victimId, slot }));
+                stopStealBar(null, victimId, slot);
+            }
         }
     }
 });
+
+function getPlayerIndex(id){
+    const divs = document.querySelectorAll('.collection');
+    for(let i=0;i<divs.length;i++){
+        if(divs[i].querySelector('div').innerText.includes(playersData[id].username)) return i;
+    }
+    return 0;
+}
 </script>
 </body>
 </html>

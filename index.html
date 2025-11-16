@@ -235,6 +235,7 @@ function stopHoldUI(key){
 
 /* ================= Walkers ================= */
 function spawnWalker(){
+  setInterval(spawnWalker, 3000);
   const rarities=[{name:'Common',cost:10,mps:1},{name:'Uncommon',cost:25,mps:3},{name:'Rare',cost:60,mps:7},{name:'Epic',cost:150,mps:15}];
   const types=['spermbob','bellbob']; const type=types[Math.floor(Math.random()*types.length)];
   const rar=rarities[Math.floor(Math.random()*rarities.length)];

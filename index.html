@@ -1,77 +1,89 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Steal A Spermbob — Multiplayer</title>
 <style>
-  :root{ --bg:#111827; --panel:#0b1220; --muted:#9aa6b2; }
-  html,body{height:100%;margin:0;background:linear-gradient(#0b1220,#07101a);font-family:Inter,system-ui,Arial;color:#e6eef8}
-  #topbar{position:fixed;left:0;right:0;top:0;height:48px;display:flex;align-items:center;gap:12px;padding:8px 12px;background:rgba(0,0,0,0.25);z-index:40}
+  :root{
+    --bg:#071018; --panel:#0b1220; --muted:#9aa6b2;
+    --rare-blue: rgba(0,120,255,0.18);
+    --epic-purple: rgba(200,50,255,0.18);
+    --uncommon-green: rgba(0,255,120,0.12);
+    --common-gray: rgba(255,255,255,0.04);
+  }
+  html,body{height:100%;margin:0;background:linear-gradient(#071018,#001018);font-family:Inter,Arial,sans-serif;color:#e6eef8}
+  #topbar{position:fixed;left:0;right:0;top:0;height:54px;display:flex;align-items:center;padding:8px 12px;gap:12px;background:rgba(0,0,0,0.25);z-index:50}
   #money{font-weight:700}
-  #playerList{position:fixed;left:12px;top:56px;background:rgba(255,255,255,0.03);padding:8px;border-radius:8px;min-width:160px;z-index:40}
-  #game{position:absolute;left:0;right:0;top:112px;bottom:12px;display:flex;gap:12px;padding:12px;box-sizing:border-box}
-  #left{flex:1; background:linear-gradient(#0b1a2a,#021018);border-radius:10px;padding:12px;position:relative;overflow:hidden}
-  #road{position:absolute;left:0;right:0;top:60px;height:160px}
+  #status{margin-left:auto;font-size:13px;color:var(--muted)}
+  #playerList{position:fixed;left:12px;top:66px;background:rgba(255,255,255,0.02);padding:8px;border-radius:8px;min-width:160px;z-index:40}
+  #playerList strong{display:block;margin-bottom:6px}
+  #main{position:absolute;left:200px;right:12px;top:66px;bottom:12px;display:flex;gap:12px;box-sizing:border-box}
+  #left{flex:1;background:linear-gradient(#05202b,#021018);border-radius:10px;padding:12px;position:relative;overflow:hidden}
+  #road{position:relative;height:180px;border-radius:6px;background:linear-gradient(#0b2630,#041018);padding:8px;overflow:hidden}
   .walker{position:absolute;display:flex;flex-direction:column;align-items:center;cursor:pointer;user-select:none}
-  .walker img{width:40px;height:40px;display:block}
-  .tag{background:rgba(0,0,0,0.45);padding:4px 8px;border-radius:6px;margin-top:6px;font-size:12px}
-  #right{width:360px;display:flex;flex-direction:column;gap:12px}
-  .panel{background:rgba(255,255,255,0.03);padding:12px;border-radius:10px}
-  #collectionsRow{display:flex;gap:18px;align-items:flex-end;overflow-x:auto;padding:8px}
-  .collection{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:320px}
-  .usernameLabel{font-weight:700}
-  .slots{display:flex;gap:6px}
-  .slot{width:56px;height:56px;background:#0e1720;border-radius:8px;border:2px solid rgba(255,255,255,0.03);position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden}
-  .slot img{width:48px;height:48px;pointer-events:none}
-  .slot .slotLabel{position:absolute;top:4px;left:6px;font-size:11px}
-  .stealBar{position:absolute;left:0;bottom:0;height:6px;background:linear-gradient(to right,#ef4444,#f97316);width:0%}
-  #status{font-size:13px;color:var(--muted)}
-  button,input,textarea{font-family:inherit}
-  #usernameScreen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);z-index:80}
-  #usernameScreen .card{background:#071118;padding:18px;border-radius:12px;width:320px;color:#e6eef8}
-  .hint{font-size:13px;color:var(--muted)}
+  .walker img{width:34px;height:34px;display:block}
+  .walker .tag{font-size:12px;margin-top:4px;background:rgba(0,0,0,0.35);padding:4px 6px;border-radius:6px}
+  #right{width:420px;display:flex;flex-direction:column;gap:12px}
+  .panel{background:rgba(255,255,255,0.02);padding:12px;border-radius:10px}
+  #collectionsArea{max-height:calc(100vh - 200px);overflow:auto;padding:6px;display:flex;flex-direction:column;gap:14px}
+  .player-block{background:rgba(255,255,255,0.01);padding:8px;border-radius:8px}
+  .player-name{font-weight:700;margin-bottom:6px}
+  .slots{display:flex;gap:8px;flex-wrap:wrap}
+  .slot{width:64px;height:64px;border-radius:8px;background:#07131a;border:1px solid rgba(255,255,255,0.03);position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden}
+  .slot img{width:56px;height:56px;pointer-events:none}
+  .slot .meta{position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:11px;padding:2px 4px;background:linear-gradient(transparent,rgba(0,0,0,0.5));}
+  .steal-bar{position:absolute;left:0;bottom:0;height:6px;background:linear-gradient(90deg,#ef4444,#f97316);width:0%}
+  .controls{display:flex;gap:8px;align-items:center}
+  input,button,textarea{font-family:inherit}
+  #usernameScreen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);z-index:120}
+  .card{background:#041518;padding:18px;border-radius:12px;width:360px;color:#e6eef8}
+  .hint{font-size:13px;color:var(--muted);margin-top:8px}
   .small{font-size:12px;color:var(--muted)}
+  .muted{color:var(--muted)}
 </style>
 </head>
 <body>
 
 <div id="topbar">
   <div id="money">Money: $<span id="moneyVal">30</span></div>
-  <div id="status" style="margin-left:auto">Not connected</div>
+  <div id="roomShow" class="muted">Room: <span id="roomLabel">—</span></div>
+  <div id="status">Not connected</div>
 </div>
 
-<div id="playerList" aria-live="polite"><strong>Players</strong><div id="playerNames"></div></div>
+<div id="playerList" aria-live="polite">
+  <strong>Players</strong>
+  <div id="playerNames">—</div>
+</div>
 
-<div id="game">
+<div id="main">
   <div id="left">
+    <h3 style="margin:6px 0 8px 6px">Road</h3>
     <div id="road"></div>
   </div>
 
   <div id="right">
     <div class="panel">
-      <div style="display:flex;gap:8px;align-items:center;">
-        <button id="saveBtn">Save</button>
-        <button id="loadBtn">Load</button>
-        <button id="resetBtn">Reset</button>
+      <div class="controls">
+        <input id="roomCode" placeholder="Room code" style="flex:1;padding:8px;border-radius:8px;border:0;background:#051218;color:#e6eef8">
+        <button id="createRoom">Host</button>
+        <button id="joinRoom">Join</button>
       </div>
-      <div class="small" style="margin-top:8px">Right-click your slot to sell (hold 5s) • Click other player's slot to start steal (15s)</div>
+      <div class="small" style="margin-top:8px">Click walkers to buy. Buy removes walker for everyone. Right-click or hold to sell your item.</div>
     </div>
 
     <div class="panel">
       <div style="display:flex;gap:8px;align-items:center">
-        <input id="roomCode" placeholder="Room code" style="flex:1;padding:8px;border-radius:8px;border:0;background:#071018;color:#e6eef8">
-        <button id="createRoom">Host</button>
-        <button id="joinRoom">Join</button>
-      </div>
-      <div style="margin-top:8px">
-        <textarea id="signalBox" placeholder="(not used for Render)" style="width:100%;height:66px;background:#021018;color:#7fffd4"></textarea>
+        <button id="saveBtn">Save</button>
+        <button id="loadBtn">Load</button>
+        <button id="resetBtn">Reset</button>
+        <div style="margin-left:auto" class="muted">BGM: <button id="toggleBgm">toggle</button></div>
       </div>
     </div>
 
     <div class="panel">
-      <strong>Your and Others' Collections</strong>
-      <div id="collectionsRow" style="margin-top:8px"></div>
+      <strong>Collections</strong>
+      <div id="collectionsArea" style="margin-top:8px"></div>
     </div>
   </div>
 </div>
@@ -79,275 +91,329 @@
 <!-- username modal -->
 <div id="usernameScreen">
   <div class="card">
-    <h2 style="margin:0 0 8px 0">Choose a username</h2>
-    <input id="usernameInput" placeholder="username" style="width:100%;padding:8px;border-radius:8px;border:0;background:#08131a;color:#e6eef8">
+    <h2 style="margin:0 0 8px 0">Enter Username</h2>
+    <input id="usernameInput" placeholder="username" style="width:100%;padding:10px;border-radius:8px;border:0;background:#041018;color:#e6eef8">
     <div style="display:flex;gap:8px;margin-top:12px">
-      <input id="roomInput" placeholder="room code (pick any)" style="flex:1;padding:8px;border-radius:8px;border:0;background:#08131a;color:#e6eef8">
-      <button id="joinBtn">Enter</button>
+      <input id="roomInput" placeholder="room code (pick any)" style="flex:1;padding:10px;border-radius:8px;border:0;background:#041018;color:#e6eef8">
+      <button id="enterBtn">Join</button>
     </div>
-    <div style="margin-top:10px" class="hint">Music will start after you join.</div>
+    <div class="hint">Music will start after you join. Your collection and money are saved locally.</div>
   </div>
 </div>
 
 <audio id="bgm" src="bgm.mp3" loop></audio>
 
 <script>
-/* ========= CONFIG ========= */
-const WS_URL = 'wss://spermbob-server.onrender.com'; // <- your Render URL (wss)
+/* ================= CONFIG ================= */
+const WS_URL = 'wss://spermbob-server.onrender.com'; // <- change if different
 const START_MONEY = 30;
-const COLLECTION_SLOTS = 8;
+const SLOTS = 8;
 
-/* ========= STATE ========= */
+/* ================= STATE ================= */
 let ws = null;
-let playerId = null;
+let playerId = null; // assigned by server on roomUpdate.you
 let username = null;
 let roomCode = null;
 let money = START_MONEY;
-let collection = new Array(COLLECTION_SLOTS).fill(null);
-let players = {};             // latest players data from server
-let activeSteals = {};        // { key: {thiefId, victimId, slot, progress, interval} }
+let collection = Array(SLOTS).fill(null);
+let players = {}; // players[id] = { username, collection, money }
+let activeSteals = {}; // key victimId_slot -> {progress, interval}
 
-/* ========= DOM ========= */
+/* rarity filters for visual tint (used as CSS drop-shadow color) */
+const rarityFilter = {
+  'Common': 'drop-shadow(0 0 6px rgba(255,255,255,0.06))',
+  'Uncommon': 'drop-shadow(0 0 8px rgba(0,255,120,0.12))',
+  'Rare': 'drop-shadow(0 0 8px rgba(0,120,255,0.16))',
+  'Epic': 'drop-shadow(0 0 10px rgba(200,50,255,0.18))'
+};
+
+/* ================= DOM ================= */
 const moneyVal = document.getElementById('moneyVal');
 const statusEl = document.getElementById('status');
-const playerNames = document.getElementById('playerNames');
-const collectionsRow = document.getElementById('collectionsRow');
+const playerNamesEl = document.getElementById('playerNames');
+const collectionsArea = document.getElementById('collectionsArea');
 const road = document.getElementById('road');
+const roomLabel = document.getElementById('roomLabel');
+const bgm = document.getElementById('bgm');
+
 const usernameScreen = document.getElementById('usernameScreen');
 const usernameInput = document.getElementById('usernameInput');
 const roomInput = document.getElementById('roomInput');
-const joinBtn = document.getElementById('joinBtn');
-const joinRoomBtn = document.getElementById('joinRoom');
-const createRoomBtn = document.getElementById('createRoom');
-const roomCodeField = document.getElementById('roomCode');
-const bgm = document.getElementById('bgm');
+const enterBtn = document.getElementById('enterBtn');
 
-/* ======= HELPERS ======= */
+const roomCodeField = document.getElementById('roomCode');
+const createRoomBtn = document.getElementById('createRoom');
+const joinRoomBtn = document.getElementById('joinRoom');
+
+document.getElementById('saveBtn').onclick = ()=> { localStorage.setItem('spermbob_save', JSON.stringify({ money, collection })); alert('Saved locally'); };
+document.getElementById('loadBtn').onclick = ()=> { const d = JSON.parse(localStorage.getItem('spermbob_save')||'null'); if(d){ money = d.money||money; collection = d.collection||collection; updateMoneyUI(); renderCollections(); safeSend({type:'update', collection, money}); } };
+document.getElementById('resetBtn').onclick = ()=> { if(confirm('Reset save?')){ money = START_MONEY; collection = Array(SLOTS).fill(null); updateMoneyUI(); renderCollections(); safeSend({type:'update', collection, money}); } };
+document.getElementById('toggleBgm').onclick = ()=> { if(bgm.paused) bgm.play(); else bgm.pause(); };
+
+/* ================= HELPERS ================= */
+function setStatus(s){ statusEl.textContent = s; }
+function updateMoneyUI(){ moneyVal.textContent = Math.floor(money); }
 function safeSend(obj){
   try{
     if(ws && ws.readyState === WebSocket.OPEN && typeof ws.send === 'function'){
       ws.send(JSON.stringify(obj));
     } else {
-      console.warn('safeSend blocked (socket not open)', obj, 'ws=', ws && ws.readyState);
+      // silently ignore if not connected, but log for debugging
+      console.warn('safeSend blocked (socket not open)', obj, 'ws=', ws ? ws.readyState : null);
     }
-  } catch(err){
-    console.error('safeSend error', err, obj);
-  }
+  }catch(e){ console.error('safeSend error', e); }
 }
-function setStatus(s){ statusEl.textContent = s; }
-function fmt(n){ return Math.floor(n*100)/100; }
 
-/* ========= UI: Username flow ========= */
-joinBtn.addEventListener('click', ()=> {
-  const name = usernameInput.value.trim();
-  const rc = roomInput.value.trim() || Math.random().toString(36).slice(2,7);
-  if(!name) return alert('pick a username');
-  username = name; roomCode = rc;
+/* ================= USER JOIN ================= */
+enterBtn.addEventListener('click', ()=> {
+  const n = usernameInput.value.trim();
+  const rc = roomInput.value.trim() || Math.random().toString(36).slice(2,6);
+  if(!n) return alert('Pick a username');
+  username = n; roomCode = rc;
+  // hide modal, show room
   usernameScreen.style.display = 'none';
   roomCodeField.value = roomCode;
-  bgm.play().catch(()=>{}); // user interacted — should allow autoplay
+  roomLabel.textContent = roomCode;
+  bgm.play().catch(()=>{});
   connectWS();
 });
 
-/* allow Enter key in modal */
-usernameInput.addEventListener('keydown', e=>{ if(e.key==='Enter') joinBtn.click(); });
-roomInput.addEventListener('keydown', e=>{ if(e.key==='Enter') joinBtn.click(); });
+usernameInput.addEventListener('keydown', (e)=> { if(e.key==='Enter') enterBtn.click(); });
+roomInput.addEventListener('keydown', (e)=> { if(e.key==='Enter') enterBtn.click(); });
 
-/* ========= WebSocket (Render) ========= */
+createRoomBtn.addEventListener('click', ()=> {
+  const c = Math.random().toString(36).slice(2,6); roomCodeField.value = c; roomInput.value = c; roomCode = c; roomLabel.textContent = c;
+});
+joinRoomBtn.addEventListener('click', ()=> {
+  const c = roomCodeField.value.trim(); if(!c) return alert('enter room code'); roomInput.value = c; roomCode = c;
+  // if already connected, request join; else modal flow will handle it
+  if(ws && ws.readyState===WebSocket.OPEN){
+    safeSend({ type:'joinRoom', username, roomCode: c });
+  } else {
+    usernameScreen.style.display = 'none';
+    connectWS();
+  }
+});
+
+/* ================= WEBSOCKET ================= */
 let reconnectTimer = null;
 function connectWS(){
-  if(ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  if(ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
   setStatus('Connecting...');
   console.log('connecting to', WS_URL);
-  ws = new WebSocket(WS_URL);
+  try{
+    ws = new WebSocket(WS_URL);
+  }catch(err){
+    console.error('WebSocket constructor failed', err);
+    setStatus('Connection failed');
+    return;
+  }
 
   ws.addEventListener('open', ()=> {
     setStatus('Connected');
-    console.log('ws open — joined room:', roomCode, 'username:', username);
+    console.log('ws open. joining room', roomCode, 'as', username);
     safeSend({ type:'joinRoom', username, roomCode });
     safeSend({ type:'update', collection, money });
   });
 
   ws.addEventListener('message', ev => {
     let data;
-    try { data = JSON.parse(ev.data); } catch(e){ console.warn('invalid JSON', e); return; }
+    try{ data = JSON.parse(ev.data); } catch(e){ console.warn('invalid JSON', ev.data); return; }
     handleMessage(data);
   });
 
   ws.addEventListener('close', ()=> {
-    setStatus('Disconnected — attempting reconnect...');
-    console.warn('ws closed — will reconnect');
-    // clear active steals UI (they will re-sync when server is back)
-    Object.keys(activeSteals).forEach(k => {
-      try { stopSteal(activeSteals[k]); } catch(e){ console.warn('stopSteal error', e); }
-    });
+    setStatus('Disconnected — reconnecting...');
+    console.warn('ws closed, reconnecting in 2s');
+    // clear steal UI
+    Object.keys(activeSteals).forEach(k => stopStealUI(keyToObj(k)));
     activeSteals = {};
     clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(()=> connectWS(), 2500);
+    reconnectTimer = setTimeout(()=> connectWS(), 2000);
   });
 
-  ws.addEventListener('error', (err)=> {
+  ws.addEventListener('error', err => {
     console.error('WebSocket error', err);
     setStatus('Connection error');
   });
 }
 
-/* ========= SERVER MESSAGE HANDLER ========= */
+/* ================= MESSAGE HANDLER ================= */
 function handleMessage(msg){
-  if(msg.type === 'roomUpdate'){
-    if(!playerId && msg.you) playerId = msg.you;
-    players = msg.players || {};
-    if(playerId && players[playerId]) {
-      if(!collection.some(Boolean) && players[playerId].collection) {
+  // server sends either roomUpdate with players object (id->player) OR players array (older versions)
+  if(msg.type === 'roomUpdate' || msg.type === 'players'){
+    // normalize to players map: {id: {username, collection, money}}
+    if(msg.type === 'roomUpdate' && msg.players){
+      players = msg.players;
+    } else if(msg.type === 'players' && Array.isArray(msg.players)){
+      // array format: [{id, username, collection, money}, ...]
+      players = {};
+      msg.players.forEach(p => { players[p.id] = { username: p.username, collection: p.collection, money: p.money }; });
+    }
+    // server may send 'you' to identify this client's id
+    if(msg.you) playerId = msg.you;
+
+    // if server has our player entry and we have empty local collection, adopt server copy
+    if(playerId && players[playerId]){
+      if(!collection.some(Boolean) && players[playerId].collection){
         collection = players[playerId].collection.slice();
         money = players[playerId].money ?? money;
         updateMoneyUI();
       }
     }
-    renderPlayersAndCollections();
+
+    renderCollections();
     renderPlayerList();
+    return;
   }
 
-  if(msg.type === 'buy' && msg.itemId) {
-    const id = msg.itemId;
-    document.querySelectorAll('.walker').forEach(w => { if(w.dataset.id === id) w.remove(); });
+  // buy event - remove walker locally
+  if(msg.type === 'buy' && msg.itemId){
+    document.querySelectorAll('.walker').forEach(w => { if(w.dataset.id === msg.itemId) w.remove(); });
+    return;
   }
 
+  // steal events
   if(msg.type === 'stealStart'){
-    startSteal(msg.thiefId, msg.victimId, msg.slot);
-    if(msg.victimId === playerId) {
-      alert(`SOMEONE IS STEALING YOUR SLOT ${msg.slot} — press any arrow key to block`);
-    }
+    // msg: {thiefId, victimId, slot}
+    startStealBar(msg.thiefId, msg.victimId, msg.slot);
+    if(msg.victimId === playerId) alert(`SOMEONE IS STEALING YOUR SLOT ${msg.slot}! Press any arrow key to block.`);
+    return;
   }
-
   if(msg.type === 'stealBlocked'){
-    stopSteal({ thiefId: msg.thiefId, victimId: msg.victimId, slot: msg.slot });
+    stopStealBar(msg.thiefId, msg.victimId, msg.slot);
     if(msg.victimId === playerId) alert('You blocked a steal!');
+    return;
   }
-
   if(msg.type === 'stealSuccess'){
-    stopSteal({ thiefId: msg.thiefId, victimId: msg.victimId, slot: msg.slot });
-    if(msg.victimId === playerId) alert('One of your items was stolen!');
-    if(msg.thiefId === playerId) alert('You stole an item!');
+    stopStealBar(msg.thiefId, msg.victimId, msg.slot);
+    // server should have transferred item; re-request state is via next roomUpdate
+    if(msg.victimId === playerId) {
+      alert('One of your items was stolen!');
+    }
+    if(msg.thiefId === playerId) {
+      alert('You stole an item!');
+    }
+    return;
   }
 }
 
-/* ========= UI RENDER ========= */
-function updateMoneyUI(){ moneyVal.textContent = fmt(money); }
+/* ================= UI RENDER ================= */
 function renderPlayerList(){
-  playerNames.innerHTML = '';
-  Object.keys(players).forEach(id => {
-    const div = document.createElement('div');
-    div.textContent = (players[id].username || 'player') + (id===playerId ? ' (You)' : '');
-    playerNames.appendChild(div);
+  playerNamesEl.innerHTML = '';
+  const ids = Object.keys(players);
+  if(ids.length === 0) playerNamesEl.textContent = '—';
+  ids.forEach(id => {
+    const d = document.createElement('div');
+    d.textContent = (players[id].username || 'player') + (id === playerId ? ' (You)' : '');
+    playerNamesEl.appendChild(d);
   });
 }
 
-/* create visible collections row: each player's collection boxed, username on top */
-function renderPlayersAndCollections(){
-  collectionsRow.innerHTML = '';
+function renderCollections(){
+  collectionsArea.innerHTML = '';
+  // ensure your block is first if available
   const ids = Object.keys(players);
-  ids.forEach(pid => {
-    const pdata = players[pid];
-    const col = document.createElement('div');
-    col.className = 'collection';
-    const name = document.createElement('div');
-    name.className = 'usernameLabel';
-    name.textContent = (pdata.username || 'player') + (pid===playerId ? ' (You)' : '');
-    col.appendChild(name);
+  const sorted = [];
+  if(playerId && players[playerId]) sorted.push(playerId);
+  ids.forEach(id => { if(id !== playerId) sorted.push(id); });
+
+  sorted.forEach(id => {
+    const p = players[id];
+    const block = document.createElement('div');
+    block.className = 'player-block';
+    const title = document.createElement('div');
+    title.className = 'player-name';
+    title.textContent = (p?.username || 'player') + (id === playerId ? ' (You)' : '');
+    block.appendChild(title);
 
     const slots = document.createElement('div');
     slots.className = 'slots';
-    for(let i=0;i<COLLECTION_SLOTS;i++){
+
+    const arr = (p && p.collection) ? p.collection : Array(SLOTS).fill(null);
+    for(let i=0;i<SLOTS;i++){
       const slot = document.createElement('div');
       slot.className = 'slot';
-      if(pdata.collection && pdata.collection[i]){
-        const it = pdata.collection[i];
+      if(arr[i]){
+        const it = arr[i];
         const img = document.createElement('img');
-        img.src = it.type === 'spermbob' ? 'spermbob.png' : 'bellbob.png';
+        img.src = (it.type === 'bellbob') ? 'bellbob.png' : 'spermbob.png';
+        img.style.filter = rarityFilter[it.rarity] || '';
         slot.appendChild(img);
-        const lab = document.createElement('div');
-        lab.className = 'slotLabel';
-        lab.textContent = `${it.rarity} $${it.mps}/s`;
-        slot.appendChild(lab);
-        const bar = document.createElement('div');
-        bar.className = 'stealBar';
-        bar.style.width = '0%';
-        slot.appendChild(bar);
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = `${it.rarity} | $${it.mps}/s`;
+        slot.appendChild(meta);
 
-        if(pid !== playerId){
-          slot.addEventListener('click', ()=> {
-            safeSend({ type:'stealStart', victimId: pid, slot: i });
-          });
-        } else {
-          let holdTimer = null;
+        // interactions
+        if(id === playerId){
+          // sell: hold left button 5s (or right-click immediate)
+          let hold = null;
           slot.addEventListener('mousedown', (e)=>{
             if(e.button !== 0) return;
-            holdTimer = setTimeout(()=>{
+            hold = setTimeout(()=> {
+              // sell: give 70% cost (cost not stored on item; approximate via mps*costFactor? we'll just refund a flat fraction of mps*10)
+              const refund = Math.max(1, Math.floor((it.mps * 5)));
+              money += refund; updateMoneyUI();
               collection[i] = null;
               safeSend({ type:'update', collection, money });
-              renderPlayersAndCollections();
+              renderCollections();
             }, 5000);
           });
-          slot.addEventListener('mouseup', ()=> { clearTimeout(holdTimer); });
-          slot.addEventListener('mouseleave', ()=> { clearTimeout(holdTimer); });
-          slot.addEventListener('contextmenu', e=>{
-            e.preventDefault();
-            collection[i] = null;
-            safeSend({ type:'update', collection, money });
-            renderPlayersAndCollections();
+          slot.addEventListener('mouseup', ()=>{ clearTimeout(hold); });
+          slot.addEventListener('mouseleave', ()=>{ clearTimeout(hold); });
+          slot.addEventListener('contextmenu', e=>{ e.preventDefault(); const refund = Math.max(1, Math.floor((it.mps * 5))); money += refund; updateMoneyUI(); collection[i]=null; safeSend({type:'update', collection, money}); renderCollections(); });
+        } else {
+          // start steal: click (left) starts steal request broadcast
+          slot.addEventListener('click', ()=> {
+            // request server to start steal
+            safeSend({ type:'stealStart', victimId: id, slot: i });
           });
         }
 
       } else {
-        slot.style.background = '#101820';
+        // empty placeholder
+        slot.style.opacity = 0.6;
       }
       slots.appendChild(slot);
     }
-    col.appendChild(slots);
-    collectionsRow.appendChild(col);
+
+    block.appendChild(slots);
+    collectionsArea.appendChild(block);
   });
 }
 
-/* ========= Walkers: spawn & buy ========= */
+/* ================= Walkers & Buying ================= */
 function spawnWalker(){
   const rarities = [
-    { id:'common', label:'Common', cost:10, mps:1, tint:'rgba(255,255,255,0.06)' },
-    { id:'uncommon', label:'Uncommon', cost:25, mps:3, tint:'rgba(0,255,120,0.08)' },
-    { id:'rare', label:'Rare', cost:60, mps:7, tint:'rgba(0,120,255,0.08)' },
-    { id:'epic', label:'Epic', cost:150, mps:15, tint:'rgba(200,50,255,0.08)' }
+    {name:'Common', cost:10, mps:1, tint: 'var(--common-gray)'},
+    {name:'Uncommon', cost:25, mps:3, tint: 'var(--uncommon-green)'},
+    {name:'Rare', cost:60, mps:7, tint: 'var(--rare-blue)'},
+    {name:'Epic', cost:150, mps:15, tint: 'var(--epic-purple)'}
   ];
   const types = ['spermbob','bellbob'];
   const type = types[Math.floor(Math.random()*types.length)];
-  const rarity = rarities[Math.floor(Math.random()*rarities.length)];
+  const rar = rarities[Math.floor(Math.random()*rarities.length)];
   const el = document.createElement('div');
   el.className = 'walker';
   el.dataset.id = Math.random().toString(36).slice(2,9);
   el.dataset.type = type;
-  el.dataset.rarity = rarity.label;
-  el.dataset.cost = rarity.cost;
-  el.dataset.mps = rarity.mps;
-  el.style.left = '-80px';
-  el.style.top = (20 + Math.random()*60) + 'px';
+  el.dataset.rarity = rar.name;
+  el.dataset.cost = rar.cost;
+  el.dataset.mps = rar.mps;
+  el.style.left = '-60px';
+  el.style.top = (16 + Math.random()*96) + 'px';
 
-  const img = document.createElement('img');
-  img.src = (type === 'spermbob') ? 'spermbob.png' : 'bellbob.png';
-  img.style.filter = `drop-shadow(0 0 6px ${rarity.tint})`;
+  const img = document.createElement('img'); img.src = (type==='bellbob')? 'bellbob.png' : 'spermbob.png';
+  img.style.filter = (rar.name && rarityFilter[rar.name]) || '';
   el.appendChild(img);
-
-  const tag = document.createElement('div');
-  tag.className = 'tag';
-  tag.textContent = `${rarity.label} — $${rarity.cost} — $${rarity.mps}/s`;
+  const tag = document.createElement('div'); tag.className = 'tag'; tag.textContent = `${rar.name} • $${rar.cost} • $${rar.mps}/s`;
   el.appendChild(tag);
-
-  el.addEventListener('click', ()=> {
-    attemptBuy(el);
-  });
-
+  el.addEventListener('click', ()=> attemptBuy(el));
   road.appendChild(el);
 
   let x = -80;
-  const speed = 0.6 + Math.random()*0.9;
+  const speed = 0.5 + Math.random() * 1.2;
   function step(){
     x += speed;
     el.style.left = x + 'px';
@@ -357,178 +423,128 @@ function spawnWalker(){
   step();
 }
 
-/* buy attempt */
 function attemptBuy(el){
   const cost = Number(el.dataset.cost);
-  if(money < cost) { showToast('Not enough money'); return; }
-  const slotIndex = collection.findIndex(s => !s);
-  if(slotIndex === -1){ showToast('Collection full — sell something'); return; }
+  if(money < cost) { alert('Not enough money'); return; }
+  const freeIndex = collection.findIndex(s => !s);
+  if(freeIndex === -1){ alert('Collection full — sell something'); return; }
+  // purchase locally
   money -= cost; updateMoneyUI();
-  collection[slotIndex] = { type: el.dataset.type, rarity: el.dataset.rarity, mps: Number(el.dataset.mps) || Number(el.dataset.mps) };
-  renderPlayersAndCollections();
-  safeSend({ type:'buy', slot: slotIndex, item: collection[slotIndex], itemId: el.dataset.id });
+  const item = { type: el.dataset.type, rarity: el.dataset.rarity, mps: Number(el.dataset.mps) };
+  collection[freeIndex] = item;
+  renderCollections();
+  // inform server
+  safeSend({ type:'buy', slot: freeIndex, item, itemId: el.dataset.id });
   safeSend({ type:'update', collection, money });
+  // remove local walker (server will broadcast too)
   el.remove();
 }
 
-function showToast(text){ console.log('TOAST:', text); }
-setInterval(spawnWalker, 1800);
+/* spawn loop */
+setInterval(spawnWalker, 2000);
 
-/* ========= Money tick (only from YOUR collection) ========= */
+/* ================= Money tick (from your own collection only) ================= */
 setInterval(()=>{
   let inc = 0;
-  for(let i=0;i<COLLECTION_SLOTS;i++){
-    if(collection[i]) inc += (collection[i].mps || 0);
-  }
-  if(inc > 0){
-    money += inc;
-    updateMoneyUI();
-  }
-  // send current state to server if connected (safeSend will guard)
+  for(let i=0;i<SLOTS;i++) if(collection[i]) inc += (collection[i].mps || 0);
+  if(inc>0){ money += inc; updateMoneyUI(); }
+  // push updates occasionally (safeSend will guard)
   safeSend({ type:'update', collection, money });
 }, 1000);
 
-/* ========= Steal system (server-synced) ========= */
-function startSteal(thiefId, victimId, slot){
-  const key = victimId + '_' + slot;
+/* ================= Steal progress UI and logic ================= */
+function keyToObj(k){ const parts = k.split('_'); return { victimId: parts[0], slot: Number(parts[1]) }; }
+function objToKey(victimId, slot){ return `${victimId}_${slot}`; }
+
+function startStealBar(thiefId, victimId, slot){
+  const key = objToKey(victimId, slot);
   if(activeSteals[key]) return;
-  activeSteals[key] = { thiefId, victimId, slot, progress:0, interval:null };
+  activeSteals[key] = { progress: 0, interval: null, thiefId, victimId, slot };
+
+  // find bar element
+  renderCollections(); // ensure bars exist
   const idx = getPlayerIndex(victimId);
   if(idx === -1) return;
-  const collectionDiv = document.querySelectorAll('#collectionsRow .collection')[idx];
-  if(!collectionDiv) return;
-  const bar = collectionDiv.querySelectorAll('.slot')[slot]?.querySelector('.stealBar');
-  if(!bar) return;
+  const block = document.querySelectorAll('.player-block')[idx];
+  if(!block) return;
+  const bar = block.querySelectorAll('.slot')[slot]?.querySelector('.steal-bar') || null;
+  // create bar if missing
+  if(!bar){
+    const slotEl = block.querySelectorAll('.slot')[slot];
+    const b = document.createElement('div'); b.className = 'steal-bar';
+    slotEl.appendChild(b);
+  }
+  // tick
   activeSteals[key].interval = setInterval(()=>{
     activeSteals[key].progress += 1;
-    bar.style.width = (activeSteals[key].progress * 100 / 15) + '%';
+    const idx2 = getPlayerIndex(victimId);
+    const block2 = document.querySelectorAll('.player-block')[idx2];
+    const bar2 = block2?.querySelectorAll('.slot')[slot]?.querySelector('.steal-bar');
+    if(bar2) bar2.style.width = (activeSteals[key].progress * 100 / 15) + '%';
     if(activeSteals[key].progress >= 15){
       clearInterval(activeSteals[key].interval);
+      // notify server of success
       safeSend({ type:'stealSuccess', victimId, slot });
       delete activeSteals[key];
     }
   }, 1000);
 }
 
-function stopSteal(detail){
-  const victimId = detail.victimId || (detail.split ? detail.split('_')[0] : null);
-  const slot = detail.slot || (detail.split ? detail.split('_')[1] : null);
-  if(!victimId) return;
-  const key = victimId + '_' + slot;
+function stopStealBar(thiefId, victimId, slot){
+  const key = objToKey(victimId, slot);
   const entry = activeSteals[key];
-  if(entry){
-    clearInterval(entry.interval);
-    const idx = getPlayerIndex(victimId);
-    if(idx !== -1){
-      const collectionDiv = document.querySelectorAll('#collectionsRow .collection')[idx];
-      const bar = collectionDiv?.querySelectorAll('.slot')[slot]?.querySelector('.stealBar');
-      if(bar) bar.style.width = '0%';
-    }
-    delete activeSteals[key];
+  if(!entry) return;
+  clearInterval(entry.interval);
+  const idx = getPlayerIndex(victimId);
+  if(idx !== -1){
+    const block = document.querySelectorAll('.player-block')[idx];
+    const bar = block?.querySelectorAll('.slot')[slot]?.querySelector('.steal-bar');
+    if(bar) bar.style.width = '0%';
   }
+  delete activeSteals[key];
 }
 
-/* keyboard defense: if victim presses arrow, send stealBlocked */
-document.addEventListener('keydown', e=>{
+function stopStealUI(detail){
+  if(!detail) return;
+  stopStealBar(detail.thiefId, detail.victimId, detail.slot);
+}
+
+/* victim defense: arrow keys block steals */
+document.addEventListener('keydown', e => {
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
+    // if any active steal has victim === me, send stealBlocked
     Object.keys(activeSteals).forEach(k => {
+      const obj = keyToObj(k);
       const entry = activeSteals[k];
       if(entry && entry.victimId === playerId){
         safeSend({ type:'stealBlocked', victimId: entry.victimId, slot: entry.slot });
-        stopSteal(entry);
+        stopStealBar(entry.thiefId, entry.victimId, entry.slot);
       }
     });
   }
 });
 
-/* ========= Utilities ========= */
+/* ================= Utility: get player-block index by id ================= */
 function getPlayerIndex(pid){
-  const cols = document.querySelectorAll('#collectionsRow .collection');
-  for(let i=0;i<cols.length;i++){
-    const name = cols[i].querySelector('.usernameLabel')?.textContent || '';
-    if(name.startsWith((players[pid]?.username || ''))) return i;
+  const blocks = document.querySelectorAll('.player-block');
+  for(let i=0;i<blocks.length;i++){
+    const name = blocks[i].querySelector('.player-name')?.textContent || '';
+    // trim possible " (You)"
+    const n = name.replace(/\s+\(You\)$/, '');
+    if(players[pid] && players[pid].username && n.startsWith(players[pid].username)) return i;
   }
   return -1;
 }
 
-/* ========= Render helpers & player list update ========= */
-function renderPlayersAndCollections(){ /* simplified re-render to keep in sync with server players state */
-  collectionsRow.innerHTML = '';
-  const ids = Object.keys(players);
-  ids.forEach(pid => {
-    const pdata = players[pid];
-    const col = document.createElement('div'); col.className = 'collection';
-    const name = document.createElement('div'); name.className = 'usernameLabel';
-    name.textContent = (pdata.username || 'player') + (pid===playerId ? ' (You)' : '');
-    col.appendChild(name);
-    const slots = document.createElement('div'); slots.className = 'slots';
-    for(let i=0;i<COLLECTION_SLOTS;i++){
-      const slot = document.createElement('div'); slot.className = 'slot';
-      if(pdata.collection && pdata.collection[i]){
-        const it = pdata.collection[i];
-        const img = document.createElement('img'); img.src = it.type === 'spermbob' ? 'spermbob.png' : 'bellbob.png';
-        slot.appendChild(img);
-        const lab = document.createElement('div'); lab.className = 'slotLabel'; lab.textContent = `${it.rarity} $${it.mps}/s`;
-        slot.appendChild(lab);
-        const bar = document.createElement('div'); bar.className = 'stealBar'; bar.style.width='0%';
-        slot.appendChild(bar);
-        if(pid !== playerId){
-          slot.addEventListener('click', ()=> { safeSend({ type:'stealStart', victimId: pid, slot: i }); });
-        } else {
-          let hold = null;
-          slot.addEventListener('mousedown', (e)=>{ if(e.button!==0) return; hold = setTimeout(()=>{ collection[i]=null; safeSend({ type:'update', collection, money }); renderPlayersAndCollections(); }, 5000); });
-          slot.addEventListener('mouseup', ()=> clearTimeout(hold));
-          slot.addEventListener('mouseleave', ()=> clearTimeout(hold));
-          slot.addEventListener('contextmenu', e=>{ e.preventDefault(); collection[i]=null; safeSend({ type:'update', collection, money }); renderPlayersAndCollections(); });
-        }
-      } else slot.style.background = '#10151a';
-      slots.appendChild(slot);
-    }
-    col.appendChild(slots);
-    collectionsRow.appendChild(col);
-  });
-  renderPlayerList();
-}
-
-/* ========= Buttons: save/load/reset ========= */
-document.getElementById('saveBtn').addEventListener('click', ()=>{
-  localStorage.setItem('spermbob_save', JSON.stringify({ money, collection }));
-  alert('Saved locally');
-});
-document.getElementById('loadBtn').addEventListener('click', ()=>{
-  const data = JSON.parse(localStorage.getItem('spermbob_save') || 'null');
-  if(data){ money = data.money || money; collection = data.collection || collection; updateMoneyUI(); renderPlayersAndCollections(); safeSend({ type:'update', collection, money }); }
-});
-document.getElementById('resetBtn').addEventListener('click', ()=>{
-  if(confirm('Reset your save?')){
-    money = START_MONEY; collection = new Array(COLLECTION_SLOTS).fill(null);
-    updateMoneyUI(); renderPlayersAndCollections(); safeSend({ type:'update', collection, money });
-  }
-});
-
-/* host/join UI */
-createRoomBtn.addEventListener('click', ()=> {
-  const code = Math.random().toString(36).slice(2,6);
-  roomCodeField.value = code; roomInput.value = code;
-});
-joinRoomBtn.addEventListener('click', ()=> {
-  const code = roomCodeField.value.trim() || roomInput.value.trim();
-  if(!code) return alert('enter room code');
-  roomInput.value = code; roomCode = code;
-  if(ws && ws.readyState === WebSocket.OPEN){
-    safeSend({ type:'joinRoom', username, roomCode: code });
-  } else {
-    usernameScreen.style.display='none';
-    connectWS();
-  }
-});
-
-/* ========= initial UI state ========= */
+/* ================= INITIAL UI/STATE ================= */
 updateMoneyUI();
-renderPlayersAndCollections();
-setStatus('Waiting for user to join...');
+setStatus('Waiting for username...');
+
+/* expose renderCollections globally for debug */
+window.renderCollections = renderCollections;
 
 </script>
 </body>
 </html>
+
 

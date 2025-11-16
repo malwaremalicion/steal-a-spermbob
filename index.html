@@ -1,237 +1,595 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Steal A Spermbob Multiplayer</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Steal A Spermbob — Multiplayer</title>
 <style>
-body { background:#222; color:white; font-family:Arial; overflow:hidden; margin:0; }
-#road { position:absolute; top:50px; left:0; width:100%; height:120px; background:#444; }
-.walker { position:absolute; width:48px; height:48px; cursor:pointer; }
-.label { font-size:12px; text-align:center; color:white; text-shadow:0 0 4px black; }
-#playersCollections { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; gap:40px; overflow-x:auto; max-width:90%; }
-.collection { display:flex; flex-direction:column; align-items:center; gap:5px; }
-.collection .slot { width:48px; height:48px; border:1px solid #555; background:#333; position:relative; cursor:pointer; }
-.collection .slot img { width:100%; height:100%; pointer-events:none; }
-#money { position:absolute; left:10px; top:10px; font-size:22px; }
-#usernameScreen { position:fixed; inset:0; background:#000a; display:flex; justify-content:center; align-items:center; }
-#usernameScreen div { background:#222; padding:20px; border-radius:12px; text-align:center; color:white; width:260px; }
-.stealProgressBar { position:absolute; height:5px; background:red; width:0; bottom:0; left:0; }
+  :root{
+    --bg:#111827; --panel:#0b1220; --muted:#9aa6b2;
+  }
+  html,body{height:100%;margin:0;background:linear-gradient(#0b1220,#07101a);font-family:Inter,system-ui,Arial;color:#e6eef8}
+  #topbar{position:fixed;left:0;right:0;top:0;height:48px;display:flex;align-items:center;gap:12px;padding:8px 12px;background:rgba(0,0,0,0.25);z-index:40}
+  #money{font-weight:700}
+  #playerList{position:fixed;left:12px;top:56px;background:rgba(255,255,255,0.03);padding:8px;border-radius:8px;min-width:160px;z-index:40}
+  #game{position:absolute;left:0;right:0;top:112px;bottom:12px;display:flex;gap:12px;padding:12px;box-sizing:border-box}
+  #left{flex:1; background:linear-gradient(#0b1a2a,#021018);border-radius:10px;padding:12px;position:relative;overflow:hidden}
+  #road{position:absolute;left:0;right:0;top:60px;height:160px}
+  .walker{position:absolute;display:flex;flex-direction:column;align-items:center;cursor:pointer;user-select:none}
+  .walker img{width:40px;height:40px;display:block}
+  .tag{background:rgba(0,0,0,0.45);padding:4px 8px;border-radius:6px;margin-top:6px;font-size:12px}
+  #right{width:360px;display:flex;flex-direction:column;gap:12px}
+  .panel{background:rgba(255,255,255,0.03);padding:12px;border-radius:10px}
+  #collectionsRow{display:flex;gap:18px;align-items:flex-end;overflow-x:auto;padding:8px}
+  .collection{display:flex;flex-direction:column;align-items:center;gap:6px;min-width:320px}
+  .usernameLabel{font-weight:700}
+  .slots{display:flex;gap:6px}
+  .slot{width:56px;height:56px;background:#0e1720;border-radius:8px;border:2px solid rgba(255,255,255,0.03);position:relative;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden}
+  .slot img{width:48px;height:48px;pointer-events:none}
+  .slot .slotLabel{position:absolute;top:4px;left:6px;font-size:11px}
+  .stealBar{position:absolute;left:0;bottom:0;height:6px;background:linear-gradient(to right,#ef4444,#f97316);width:0%}
+  #status{font-size:13px;color:var(--muted)}
+  button,input,textarea{font-family:inherit}
+  #usernameScreen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);z-index:80}
+  #usernameScreen .card{background:#071118;padding:18px;border-radius:12px;width:320px;color:#e6eef8}
+  .hint{font-size:13px;color:var(--muted)}
+  .small{font-size:12px;color:var(--muted)}
 </style>
 </head>
 <body>
 
-<div id="money">$30</div>
-<div id="road"></div>
-<div id="playersCollections"></div>
-
-<div id="usernameScreen">
-<div>
-<h2>Enter Username</h2>
-<input id="usernameInput" placeholder="Username" style="width:100%; padding:8px; margin:10px 0;">
-<h2>Room Code</h2>
-<input id="roomInput" placeholder="Room code" style="width:100%; padding:8px; margin:10px 0;">
-<button id="joinBtn" style="padding:8px 12px;">Join Room</button>
+<div id="topbar">
+  <div id="money">Money: $<span id="moneyVal">30</span></div>
+  <div id="status" style="margin-left:auto">Not connected</div>
 </div>
+
+<div id="playerList" aria-live="polite"><strong>Players</strong><div id="playerNames"></div></div>
+
+<div id="game">
+  <div id="left">
+    <div id="road"></div>
+  </div>
+
+  <div id="right">
+    <div class="panel">
+      <div style="display:flex;gap:8px;align-items:center;">
+        <button id="saveBtn">Save</button>
+        <button id="loadBtn">Load</button>
+        <button id="resetBtn">Reset</button>
+      </div>
+      <div class="small" style="margin-top:8px">Right-click your slot to sell (hold 5s) • Click other player's slot to start steal (15s)</div>
+    </div>
+
+    <div class="panel">
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="roomCode" placeholder="Room code" style="flex:1;padding:8px;border-radius:8px;border:0;background:#071018;color:#e6eef8">
+        <button id="createRoom">Host</button>
+        <button id="joinRoom">Join</button>
+      </div>
+      <div style="margin-top:8px">
+        <textarea id="signalBox" placeholder="(not used for Render)" style="width:100%;height:66px;background:#021018;color:#7fffd4"></textarea>
+      </div>
+    </div>
+
+    <div class="panel">
+      <strong>Your and Others' Collections</strong>
+      <div id="collectionsRow" style="margin-top:8px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- username modal -->
+<div id="usernameScreen">
+  <div class="card">
+    <h2 style="margin:0 0 8px 0">Choose a username</h2>
+    <input id="usernameInput" placeholder="username" style="width:100%;padding:8px;border-radius:8px;border:0;background:#08131a;color:#e6eef8">
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <input id="roomInput" placeholder="room code (pick any)" style="flex:1;padding:8px;border-radius:8px;border:0;background:#08131a;color:#e6eef8">
+      <button id="joinBtn">Enter</button>
+    </div>
+    <div style="margin-top:10px" class="hint">Music will start after you join.</div>
+  </div>
 </div>
 
 <audio id="bgm" src="bgm.mp3" loop></audio>
 
 <script>
-let ws, playerId;
-let username, roomCode;
-let money = 30;
-let collection = Array(8).fill(null);
-let playersData = {};
-let activeSteals = {}; // {"victimId_slot": {progress:0, interval:null}}
+/* ========= CONFIG ========= */
+const WS_URL = 'wss://spermbob-server.onrender.com'; // <- your Render URL (wss)
+const START_MONEY = 30;
+const COLLECTION_SLOTS = 8;
 
-const playersCollections = document.getElementById('playersCollections');
+/* ========= STATE ========= */
+let ws = null;
+let connected = false;
+let playerId = null;           // assigned by server on roomUpdate.you
+let username = null;
+let roomCode = null;
+let money = START_MONEY;
+let collection = new Array(COLLECTION_SLOTS).fill(null);
+let players = {};             // latest players data from server (players[playerId] = {username, collection, money})
+let activeSteals = {};        // { key: {thiefId, victimId, slot, progress, interval} }
+
+/* ========= DOM ========= */
+const moneyVal = document.getElementById('moneyVal');
+const statusEl = document.getElementById('status');
+const playerNames = document.getElementById('playerNames');
+const collectionsRow = document.getElementById('collectionsRow');
 const road = document.getElementById('road');
-const moneyDiv = document.getElementById('money');
+const usernameScreen = document.getElementById('usernameScreen');
+const usernameInput = document.getElementById('usernameInput');
+const roomInput = document.getElementById('roomInput');
+const joinBtn = document.getElementById('joinBtn');
+const joinRoomBtn = document.getElementById('joinRoom');
+const createRoomBtn = document.getElementById('createRoom');
+const roomCodeField = document.getElementById('roomCode');
+const bgm = document.getElementById('bgm');
 
-document.getElementById('joinBtn').onclick = () => {
-    username = document.getElementById('usernameInput').value.trim();
-    roomCode = document.getElementById('roomInput').value.trim();
-    if(!username || !roomCode) return;
-    document.getElementById('usernameScreen').style.display='none';
-    document.getElementById('bgm').play().catch(()=>{});
-    connect();
+/* ======= HELPERS ======= */
+function safeSend(obj){
+  if(ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
 }
+function setStatus(s){ statusEl.textContent = s; }
+function fmt(n){ return Math.floor(n*100)/100; }
 
-function connect(){
-    ws = new WebSocket('wss://spermbob-server.onrender.com');
-    ws.onopen = () => {
-        ws.send(JSON.stringify({ 
-            type:'joinRoom', 
-            username, 
-            roomCode 
-        }));
-        console.log("Connected to Render WebSocket server");
-    };
-    ws.onmessage = e => handleMessage(JSON.parse(e.data));
-    ws.onerror = err => console.error("WebSocket Error:", err);
-}
-
-
-function handleMessage(data){
-    if(data.type==='roomUpdate'){
-        if(!playerId) playerId = data.you;
-        playersData = data.players;
-        renderPlayersCollections(playersData);
-    } else if(data.type==='buy'){
-        removeWalker(data.itemId);
-    } else if(data.type==='stealStart'){
-        startStealBar(data.thiefId, data.victimId, data.slot);
-        if(data.victimId===playerId) alert(`Someone is stealing your item in slot ${data.slot}! Press arrow keys to block!`);
-    } else if(data.type==='stealBlocked'){
-        stopStealBar(data.thiefId, data.victimId, data.slot);
-        if(data.victimId===playerId) alert('Steal blocked!');
-    } else if(data.type==='stealSuccess'){
-        stopStealBar(data.thiefId, data.victimId, data.slot);
-        alert('Item stolen!');
-        if(data.victimId===playerId){
-            collection[data.slot] = null; // remove stolen item
-        }
-    }
-}
-
-function renderPlayersCollections(players){
-    playersCollections.innerHTML='';
-    for(let id in players){
-        const p = players[id];
-        const colDiv = document.createElement('div');
-        colDiv.className='collection';
-        const nameDiv = document.createElement('div'); 
-        nameDiv.innerText = p.username + (id===playerId?' (You)':'');
-        colDiv.appendChild(nameDiv);
-
-        for(let i=0;i<8;i++){
-            const slot = document.createElement('div'); slot.className='slot';
-            if(p.collection[i]){
-                const img = document.createElement('img');
-                img.src=p.collection[i].type==='spermbob'?'spermbob.png':'bellbob.png';
-                slot.appendChild(img);
-                const lab = document.createElement('div'); lab.className='label';
-                lab.innerText=`${p.collection[i].rarity} | $${p.collection[i].mps}/s`;
-                slot.appendChild(lab);
-                const bar = document.createElement('div'); bar.className='stealProgressBar';
-                slot.appendChild(bar);
-                if(id !== playerId){
-                    slot.onclick = ()=>ws.send(JSON.stringify({ type:'stealStart', victimId:id, slot:i }));
-                } else {
-                    slot.oncontextmenu = e=>{ // right click to sell
-                        e.preventDefault();
-                        collection[i]=null;
-                        ws.send(JSON.stringify({ type:'update', collection, money }));
-                        renderPlayersCollections(playersData);
-                    }
-                }
-            }
-            colDiv.appendChild(slot);
-        }
-        playersCollections.appendChild(colDiv);
-    }
-}
-
-// --- Walkers ---
-function spawnWalker(){
-    const types = ['spermbob','bellbob'];
-    const rarities = [
-        {name:"Common", cost:10, mps:1},
-        {name:"Uncommon", cost:25, mps:3},
-        {name:"Rare", cost:60, mps:7},
-        {name:"Epic", cost:150, mps:15}
-    ];
-    const type = types[Math.floor(Math.random()*types.length)];
-    const rarity = rarities[Math.floor(Math.random()*rarities.length)];
-    const div = document.createElement('div'); div.className='walker';
-    div.style.left='-50px'; div.dataset.type=type; div.dataset.rarity=rarity.name;
-    div.dataset.cost=rarity.cost; div.dataset.mps=rarity.mps; div.dataset.id=Math.random().toString(36).substr(2,9);
-    const img = document.createElement('img'); img.src=type+'.png'; img.style.width='48px'; img.style.height='48px';
-    div.appendChild(img);
-    const label = document.createElement('div'); label.className='label';
-    label.innerText=`${rarity.name} | $${rarity.mps}/s | Cost:${rarity.cost}`;
-    div.appendChild(label);
-    div.onclick = ()=>buy(div);
-    road.appendChild(div);
-    let x=-50; const speed = 1+Math.random();
-    function move(){ x+=speed; div.style.left=x+'px'; if(x>window.innerWidth+50) div.remove(); else requestAnimationFrame(move); }
-    move();
-}
-setInterval(spawnWalker,2000);
-
-function buy(div){
-    const cost = Number(div.dataset.cost);
-    if(money<cost) return;
-    money -= cost; moneyDiv.innerText='$'+money;
-    const slotIndex = collection.findIndex(s=>!s);
-    if(slotIndex!==-1){
-        collection[slotIndex] = { type:div.dataset.type, rarity:div.dataset.rarity, mps:Number(div.dataset.mps) };
-        ws.send(JSON.stringify({ type:'buy', slot:slotIndex, item:collection[slotIndex], itemId:div.dataset.id }));
-    }
-    div.remove();
-}
-
-function removeWalker(id){
-    document.querySelectorAll('.walker').forEach(w=>{ if(w.dataset.id===id) w.remove(); });
-}
-
-// --- Money per second ---
-setInterval(()=>{
-    let total=0;
-    for(let i=0;i<collection.length;i++){ if(collection[i]) total+=collection[i].mps; }
-    money+=total; moneyDiv.innerText='$'+money;
-    ws.send(JSON.stringify({ type:'update', collection, money }));
-},1000);
-
-// --- Multiplayer steal bar ---
-function startStealBar(thiefId, victimId, slot){
-    const key = victimId + '_' + slot;
-    if(activeSteals[key]) return;
-    activeSteals[key]={progress:0};
-    const bar = document.querySelectorAll('.collection')[getPlayerIndex(victimId)]
-                  .querySelectorAll('.slot')[slot].querySelector('.stealProgressBar');
-    activeSteals[key].interval = setInterval(()=>{
-        activeSteals[key].progress += 1;
-        if(bar) bar.style.width = (activeSteals[key].progress*100/15)+'%';
-        if(activeSteals[key].progress>=15){
-            clearInterval(activeSteals[key].interval);
-            ws.send(JSON.stringify({ type:'stealSuccess', victimId, slot }));
-            delete activeSteals[key];
-        }
-    },1000);
-}
-
-function stopStealBar(thiefId, victimId, slot){
-    const key = victimId + '_' + slot;
-    if(activeSteals[key]){
-        clearInterval(activeSteals[key].interval);
-        const bar = document.querySelectorAll('.collection')[getPlayerIndex(victimId)]
-                      .querySelectorAll('.slot')[slot].querySelector('.stealProgressBar');
-        if(bar) bar.style.width='0%';
-        delete activeSteals[key];
-    }
-}
-
-document.addEventListener('keydown', e=>{
-    if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
-        for(const key in activeSteals){
-            const [victimId, slot] = key.split('_');
-            if(victimId===playerId){
-                ws.send(JSON.stringify({ type:'stealBlocked', victimId, slot }));
-                stopStealBar(null, victimId, slot);
-            }
-        }
-    }
+/* ========= UI: Username flow ========= */
+joinBtn.addEventListener('click', ()=> {
+  const name = usernameInput.value.trim();
+  const rc = roomInput.value.trim() || Math.random().toString(36).slice(2,7);
+  if(!name) return alert('pick a username');
+  username = name; roomCode = rc;
+  usernameScreen.style.display = 'none';
+  roomCodeField.value = roomCode;
+  bgm.play().catch(()=>{}); // user interacted — should allow autoplay
+  connectWS();
 });
 
-function getPlayerIndex(id){
-    const divs = document.querySelectorAll('.collection');
-    for(let i=0;i<divs.length;i++){
-        if(divs[i].querySelector('div').innerText.includes(playersData[id].username)) return i;
-    }
-    return 0;
+/* allow Enter key in modal */
+usernameInput.addEventListener('keydown', e=>{ if(e.key==='Enter') joinBtn.click(); });
+roomInput.addEventListener('keydown', e=>{ if(e.key==='Enter') joinBtn.click(); });
+
+/* ========= WebSocket (Render) ========= */
+let reconnectTimer = null;
+function connectWS(){
+  if(ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  setStatus('Connecting...');
+  ws = new WebSocket(WS_URL);
+  ws.addEventListener('open', ()=> {
+    setStatus('Connected');
+    connected = true;
+    safeSend({ type:'joinRoom', username, roomCode });
+    // send initial update so server has our state
+    safeSend({ type:'update', collection, money });
+  });
+  ws.addEventListener('message', ev => {
+    let data;
+    try { data = JSON.parse(ev.data); } catch(e){ console.warn('invalid JSON', e); return; }
+    handleMessage(data);
+  });
+  ws.addEventListener('close', ()=> {
+    setStatus('Disconnected — attempting reconnect...');
+    connected = false;
+    // clear active steals UI (they will re-sync)
+    Object.keys(activeSteals).forEach(k => stopStealUI(activeSteals[k]));
+    activeSteals = {};
+    // attempt reconnect after a short delay
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(()=> connectWS(), 2500);
+  });
+  ws.addEventListener('error', (err)=> {
+    console.error('WebSocket error', err);
+    setStatus('Connection error');
+  });
 }
+
+/* ========= SERVER MESSAGE HANDLER ========= */
+function handleMessage(msg){
+  if(msg.type === 'roomUpdate'){
+    // server includes "you" id for each client receive
+    if(!playerId && msg.you) playerId = msg.you;
+    players = msg.players || {};
+    // If server gave us players, also update our local copies if missing
+    // If server has our player record, load its collection & money (first join)
+    if(playerId && players[playerId]) {
+      // adopt server-side if our local is empty (this ensures saved loads still work)
+      if(!collection.some(Boolean) && players[playerId].collection) {
+        collection = players[playerId].collection.slice();
+        money = players[playerId].money ?? money;
+        updateMoneyUI();
+      }
+    }
+    renderPlayersAndCollections();
+    renderPlayerList();
+  }
+
+  // event-style messages (optional)
+  if(msg.type === 'buy' && msg.itemId) {
+    // remove walker locally if exists
+    const id = msg.itemId;
+    document.querySelectorAll('.walker').forEach(w => { if(w.dataset.id === id) w.remove(); });
+  }
+
+  if(msg.type === 'stealStart'){
+    startSteal(msg.thiefId, msg.victimId, msg.slot);
+    if(msg.victimId === playerId) {
+      // show text warning
+      alert(`SOMEONE IS STEALING YOUR SLOT ${msg.slot} — press any arrow key to block`);
+    }
+  }
+
+  if(msg.type === 'stealBlocked'){
+    stopSteal({ thiefId: msg.thiefId, victimId: msg.victimId, slot: msg.slot });
+    if(msg.victimId === playerId) alert('You blocked a steal!');
+  }
+
+  if(msg.type === 'stealSuccess'){
+    // server already transferred item on server copy; request updated room state arrives via broadcast
+    stopSteal({ thiefId: msg.thiefId, victimId: msg.victimId, slot: msg.slot });
+    if(msg.victimId === playerId) alert('One of your items was stolen!');
+    if(msg.thiefId === playerId) alert('You stole an item!');
+  }
+}
+
+/* ========= UI RENDER ========= */
+function updateMoneyUI(){ moneyVal.textContent = fmt(money); }
+function renderPlayerList(){
+  playerNames.innerHTML = '';
+  const keys = Object.keys(players);
+  keys.forEach(id => {
+    const div = document.createElement('div');
+    div.textContent = (players[id].username || 'player') + (id===playerId ? ' (You)' : '');
+    playerNames.appendChild(div);
+  });
+}
+
+/* create visible collections row: each player's collection boxed, username on top */
+function renderPlayersAndCollections(){
+  collectionsRow.innerHTML = '';
+  const ids = Object.keys(players);
+  ids.forEach(pid => {
+    const pdata = players[pid];
+    const col = document.createElement('div');
+    col.className = 'collection';
+    const name = document.createElement('div');
+    name.className = 'usernameLabel';
+    name.textContent = (pdata.username || 'player') + (pid===playerId ? ' (You)' : '');
+    col.appendChild(name);
+
+    const slots = document.createElement('div');
+    slots.className = 'slots';
+    for(let i=0;i<COLLECTION_SLOTS;i++){
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      // placeholder when empty
+      if(pdata.collection && pdata.collection[i]){
+        const it = pdata.collection[i];
+        const img = document.createElement('img');
+        img.src = it.type === 'spermbob' ? 'spermbob.png' : 'bellbob.png';
+        slot.appendChild(img);
+        const lab = document.createElement('div');
+        lab.className = 'slotLabel';
+        lab.textContent = `${it.rarity} $${it.mps}/s`;
+        slot.appendChild(lab);
+        const bar = document.createElement('div');
+        bar.className = 'stealBar';
+        bar.style.width = '0%';
+        slot.appendChild(bar);
+
+        // stealing: only allow clicking other players' slots to start steal
+        if(pid !== playerId){
+          slot.addEventListener('click', ()=> {
+            // start steal by telling server
+            safeSend({ type:'stealStart', victimId: pid, slot: i });
+          });
+        } else {
+          // your own slot: allow hold-to-sell (mouse down 5s)
+          let holdTimer = null;
+          slot.addEventListener('mousedown', (e)=>{
+            if(e.button !== 0) return; // left click only for sell hold we will use right-click alternative too
+            holdTimer = setTimeout(()=>{
+              // sell
+              collection[i] = null;
+              safeSend({ type:'update', collection, money });
+              renderPlayersAndCollections();
+            }, 5000);
+          });
+          slot.addEventListener('mouseup', ()=> { clearTimeout(holdTimer); });
+          slot.addEventListener('mouseleave', ()=> { clearTimeout(holdTimer); });
+
+          // also support right-click to sell immediately (context menu)
+          slot.addEventListener('contextmenu', e=>{
+            e.preventDefault();
+            collection[i] = null;
+            safeSend({ type:'update', collection, money });
+            renderPlayersAndCollections();
+          });
+        }
+
+      } else {
+        // empty placeholder
+        slot.style.background = '#101820';
+      }
+      slots.appendChild(slot);
+    }
+    col.appendChild(slots);
+    collectionsRow.appendChild(col);
+  });
+}
+
+/* ========= Walkers: spawn & buy ========= */
+function spawnWalker(){
+  // rarities
+  const rarities = [
+    { id:'common', label:'Common', cost:10, mps:1, tint:'rgba(255,255,255,0.06)' },
+    { id:'uncommon', label:'Uncommon', cost:25, mps:3, tint:'rgba(0,255,120,0.08)' },
+    { id:'rare', label:'Rare', cost:60, mps:7, tint:'rgba(0,120,255,0.08)' },
+    { id:'epic', label:'Epic', cost:150, mps:15, tint:'rgba(200,50,255,0.08)' }
+  ];
+  const types = ['spermbob','bellbob'];
+  const type = types[Math.floor(Math.random()*types.length)];
+  const rarity = rarities[Math.floor(Math.random()*rarities.length)];
+  const el = document.createElement('div');
+  el.className = 'walker';
+  el.dataset.id = Math.random().toString(36).slice(2,9);
+  el.dataset.type = type;
+  el.dataset.rarity = rarity.label;
+  el.dataset.cost = rarity.cost;
+  el.dataset.mps = rarity.mps;
+  el.style.left = '-80px';
+  el.style.top = (20 + Math.random()*60) + 'px';
+
+  const img = document.createElement('img');
+  img.src = (type === 'spermbob') ? 'spermbob.png' : 'bellbob.png';
+  img.style.filter = `drop-shadow(0 0 6px ${rarity.tint})`;
+  el.appendChild(img);
+
+  const tag = document.createElement('div');
+  tag.className = 'tag';
+  tag.textContent = `${rarity.label} — $${rarity.cost} — $${rarity.mps}/s`;
+  el.appendChild(tag);
+
+  el.addEventListener('click', ()=> {
+    attemptBuy(el);
+  });
+
+  road.appendChild(el);
+
+  // animate
+  let x = -80;
+  const speed = 0.6 + Math.random()*0.9;
+  function step(){
+    x += speed;
+    el.style.left = x + 'px';
+    if(x > window.innerWidth + 80) el.remove();
+    else requestAnimationFrame(step);
+  }
+  step();
+}
+
+/* buy attempt */
+function attemptBuy(el){
+  const cost = Number(el.dataset.cost);
+  if(money < cost) { showToast('Not enough money'); return; }
+  const slotIndex = collection.findIndex(s => !s);
+  if(slotIndex === -1){ showToast('Collection full — sell something'); return; }
+  // deduct
+  money -= cost; updateMoneyUI();
+  collection[slotIndex] = { type: el.dataset.type, rarity: el.dataset.rarity, mps: Number(el.dataset.mps) || Number(el.dataset.mps) };
+  renderPlayersAndCollections();
+  // inform server — guarded
+  safeSend({ type:'buy', slot: slotIndex, item: collection[slotIndex], itemId: el.dataset.id });
+  // also send update to save local server state
+  safeSend({ type:'update', collection, money });
+  // remove locally (server will broadcast too)
+  el.remove();
+}
+
+/* helper toast */
+function showToast(text){
+  console.log('TOAST:', text);
+}
+
+/* spawn loop */
+setInterval(spawnWalker, 1800);
+
+/* ========= Money tick (only from YOUR collection) ========= */
+setInterval(()=>{
+  let inc = 0;
+  for(let i=0;i<COLLECTION_SLOTS;i++){
+    if(collection[i]) inc += (collection[i].mps || 0);
+  }
+  if(inc > 0){
+    money += inc;
+    updateMoneyUI();
+  }
+  // send current state to server if connected
+  if(ws && ws.readyState === WebSocket.OPEN){
+    safeSend({ type:'update', collection, money });
+  }
+}, 1000);
+
+/* ========= Steal system (server-synced) ========= */
+function startSteal(thiefId, victimId, slot){
+  // create key
+  const key = victimId + '_' + slot;
+  if(activeSteals[key]) return; // already active
+  activeSteals[key] = { thiefId, victimId, slot, progress:0, interval:null };
+
+  // find corresponding bar element
+  const idx = getPlayerIndex(victimId);
+  if(idx === -1) return;
+  const collectionDiv = document.querySelectorAll('#collectionsRow .collection')[idx];
+  if(!collectionDiv) return;
+  const bar = collectionDiv.querySelectorAll('.slot')[slot]?.querySelector('.stealBar');
+  if(!bar) return;
+
+  // tick
+  activeSteals[key].interval = setInterval(()=>{
+    activeSteals[key].progress += 1;
+    bar.style.width = (activeSteals[key].progress * 100 / 15) + '%';
+    // optionally broadcast progress to others (server currently handles start/block/success events)
+    if(activeSteals[key].progress >= 15){
+      clearInterval(activeSteals[key].interval);
+      // notify server of success (server will transfer and broadcast)
+      safeSend({ type:'stealSuccess', victimId, slot });
+      delete activeSteals[key];
+    }
+  }, 1000);
+}
+
+function stopSteal(detail){
+  // detail can be object {thiefId, victimId, slot} or key
+  const victimId = detail.victimId || (detail.split ? detail.split('_')[0] : null);
+  const slot = detail.slot || (detail.split ? detail.split('_')[1] : null);
+  const key = victimId + '_' + slot;
+  const entry = activeSteals[key];
+  if(entry){
+    clearInterval(entry.interval);
+    // reset UI bar
+    const idx = getPlayerIndex(victimId);
+    if(idx !== -1){
+      const collectionDiv = document.querySelectorAll('#collectionsRow .collection')[idx];
+      const bar = collectionDiv?.querySelectorAll('.slot')[slot]?.querySelector('.stealBar');
+      if(bar) bar.style.width = '0%';
+    }
+    delete activeSteals[key];
+  }
+}
+
+/* when server tells us to start/stop steal, we call startSteal / stopSteal */
+function startStealUI(thiefId, victimId, slot){
+  safeSend({ type:'stealStart', victimId, slot }); // not used locally; server also broadcasts to others
+}
+
+/* keyboard defense: if victim presses arrow, send stealBlocked */
+document.addEventListener('keydown', e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
+    // find any active steals where we are the victim
+    Object.keys(activeSteals).forEach(k => {
+      const entry = activeSteals[k];
+      if(entry && entry.victimId === playerId){
+        safeSend({ type:'stealBlocked', victimId: entry.victimId, slot: entry.slot });
+        stopSteal(entry);
+      }
+    });
+  }
+});
+
+/* ========= Utilities ========= */
+function getPlayerIndex(pid){
+  const cols = document.querySelectorAll('#collectionsRow .collection');
+  for(let i=0;i<cols.length;i++){
+    const name = cols[i].querySelector('.usernameLabel')?.textContent || '';
+    if(name.startsWith((players[pid]?.username || ''))) return i;
+  }
+  return -1;
+}
+
+/* ========= Render helpers & player list update ========= */
+function renderPlayersAndCollections(){ // override earlier definition to use the same element class names
+  collectionsRow.innerHTML = '';
+  const ids = Object.keys(players);
+  ids.forEach(pid => {
+    const pdata = players[pid];
+    const col = document.createElement('div');
+    col.className = 'collection';
+    const name = document.createElement('div');
+    name.className = 'usernameLabel';
+    name.textContent = (pdata.username || 'player') + (pid===playerId ? ' (You)' : '');
+    col.appendChild(name);
+
+    const slots = document.createElement('div');
+    slots.className = 'slots';
+    for(let i=0;i<COLLECTION_SLOTS;i++){
+      const slot = document.createElement('div'); slot.className = 'slot';
+      if(pdata.collection && pdata.collection[i]){
+        const it = pdata.collection[i];
+        const img = document.createElement('img');
+        img.src = it.type === 'spermbob' ? 'spermbob.png' : 'bellbob.png';
+        slot.appendChild(img);
+        const lab = document.createElement('div'); lab.className = 'slotLabel';
+        lab.textContent = `${it.rarity} $${it.mps}/s`;
+        slot.appendChild(lab);
+        const bar = document.createElement('div'); bar.className = 'stealBar'; bar.style.width='0%';
+        slot.appendChild(bar);
+
+        if(pid !== playerId){
+          slot.addEventListener('click', ()=> {
+            safeSend({ type:'stealStart', victimId: pid, slot: i });
+          });
+        } else {
+          // your slot: hold to sell for 5s
+          let hold = null;
+          slot.addEventListener('mousedown', (e)=>{
+            if(e.button !== 0) return;
+            hold = setTimeout(()=> {
+              collection[i] = null;
+              safeSend({ type:'update', collection, money });
+              renderPlayersAndCollections();
+            }, 5000);
+          });
+          slot.addEventListener('mouseup', ()=> clearTimeout(hold));
+          slot.addEventListener('mouseleave', ()=> clearTimeout(hold));
+          slot.addEventListener('contextmenu', e=>{ e.preventDefault(); collection[i]=null; safeSend({ type:'update', collection, money }); renderPlayersAndCollections(); });
+        }
+      } else {
+        slot.style.background = '#10151a';
+      }
+      slots.appendChild(slot);
+    }
+    col.appendChild(slots);
+    collectionsRow.appendChild(col);
+  });
+
+  // update player list block
+  playerNames.innerHTML = '';
+  Object.keys(players).forEach(pid => {
+    const d = document.createElement('div');
+    d.textContent = (players[pid].username || 'player') + (pid===playerId ? ' (You)' : '');
+    playerNames.appendChild(d);
+  });
+}
+
+/* ========= Buttons: save/load/reset ========= */
+document.getElementById('saveBtn').addEventListener('click', ()=>{
+  localStorage.setItem('spermbob_save', JSON.stringify({ money, collection }));
+  alert('Saved locally');
+});
+document.getElementById('loadBtn').addEventListener('click', ()=>{
+  const data = JSON.parse(localStorage.getItem('spermbob_save') || 'null');
+  if(data){ money = data.money || money; collection = data.collection || collection; updateMoneyUI(); renderPlayersAndCollections(); safeSend({ type:'update', collection, money }); }
+});
+document.getElementById('resetBtn').addEventListener('click', ()=>{
+  if(confirm('Reset your save?')){
+    money = START_MONEY; collection = new Array(COLLECTION_SLOTS).fill(null);
+    updateMoneyUI(); renderPlayersAndCollections(); safeSend({ type:'update', collection, money });
+  }
+});
+
+/* host/join UI — they just set the room code field (server handles join via join modal) */
+createRoomBtn.addEventListener('click', ()=> {
+  const code = Math.random().toString(36).slice(2,6);
+  roomCodeField.value = code; roomInput.value = code;
+});
+joinRoomBtn.addEventListener('click', ()=> {
+  const code = roomCodeField.value.trim() || roomInput.value.trim();
+  if(!code) return alert('enter room code');
+  roomInput.value = code; roomCode = code;
+  // if already connected, send join request (useful for switching rooms)
+  if(ws && ws.readyState === WebSocket.OPEN){
+    safeSend({ type:'joinRoom', username, roomCode: code });
+  } else {
+    // else ensure modal is closed and connect will use existing roomInput on initial join
+    usernameScreen.style.display='none';
+    connectWS();
+  }
+});
+
+/* ========= initial UI state ========= */
+updateMoneyUI();
+renderPlayersAndCollections();
+setStatus('Waiting for user to join...');
+
 </script>
 </body>
 </html>

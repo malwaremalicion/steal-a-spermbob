@@ -9,14 +9,14 @@ body { background:#222; color:white; font-family:Arial; overflow:hidden; margin:
 #road { position:absolute; top:50px; left:0; width:100%; height:120px; background:#444; }
 .walker { position:absolute; width:48px; height:48px; cursor:pointer; }
 .label { font-size:12px; text-align:center; color:white; text-shadow:0 0 4px black; }
-#playersCollections { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; gap:40px; }
+#playersCollections { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; gap:40px; overflow-x:auto; max-width:90%; }
 .collection { display:flex; flex-direction:column; align-items:center; gap:5px; }
 .collection .slot { width:48px; height:48px; border:1px solid #555; background:#333; position:relative; cursor:pointer; }
 .collection .slot img { width:100%; height:100%; pointer-events:none; }
 #money { position:absolute; left:10px; top:10px; font-size:22px; }
 #usernameScreen { position:fixed; inset:0; background:#000a; display:flex; justify-content:center; align-items:center; }
 #usernameScreen div { background:#222; padding:20px; border-radius:12px; text-align:center; color:white; width:260px; }
-#stealProgressBar { position:absolute; height:5px; background:red; width:0; bottom:0; left:0; }
+.stealProgressBar { position:absolute; height:5px; background:red; width:0; bottom:0; left:0; }
 </style>
 </head>
 <body>
@@ -38,7 +38,7 @@ body { background:#222; color:white; font-family:Arial; overflow:hidden; margin:
 <audio id="bgm" src="bgm.mp3" loop></audio>
 
 <script>
-let ws;
+let ws, playerId;
 let username, roomCode;
 let money = 30;
 let collection = Array(8).fill(null);
@@ -55,7 +55,7 @@ document.getElementById('joinBtn').onclick = () => {
     roomCode = document.getElementById('roomInput').value.trim();
     if(!username || !roomCode) return;
     document.getElementById('usernameScreen').style.display='none';
-    const bgm = document.getElementById('bgm'); bgm.play().catch(()=>{});
+    document.getElementById('bgm').play().catch(()=>{});
     connect();
 }
 
@@ -67,15 +67,10 @@ function connect(){
 
 function handleMessage(data){
     if(data.type==='roomUpdate'){
+        if(!playerId) playerId = data.you;
         renderPlayersCollections(data.players);
     } else if(data.type==='buy'){
         removeWalker(data.itemId);
-    } else if(data.type==='sell'){
-        // optional: visual update
-    } else if(data.type==='stealAttempt'){
-        if(data.victimId===ws._socket?.id || data.victimId===ws.id){
-            showStealProgress(data.slot);
-        }
     }
 }
 
@@ -85,8 +80,10 @@ function renderPlayersCollections(players){
         const p = players[id];
         const colDiv = document.createElement('div');
         colDiv.className='collection';
-        const nameDiv = document.createElement('div'); nameDiv.innerText = p.username;
+        const nameDiv = document.createElement('div'); 
+        nameDiv.innerText = p.username + (id===playerId?' (You)':'');
         colDiv.appendChild(nameDiv);
+
         for(let i=0;i<8;i++){
             const slot = document.createElement('div'); slot.className='slot';
             if(p.collection[i]){
@@ -96,8 +93,10 @@ function renderPlayersCollections(players){
                 const lab = document.createElement('div'); lab.className='label';
                 lab.innerText=`${p.collection[i].rarity} | $${p.collection[i].mps}/s`;
                 slot.appendChild(lab);
-                const bar = document.createElement('div'); bar.id='stealProgressBar';
+                const bar = document.createElement('div'); bar.className='stealProgressBar';
                 slot.appendChild(bar);
+            } else {
+                slot.style.background = '#555';
             }
             colDiv.appendChild(slot);
         }
@@ -135,10 +134,10 @@ setInterval(spawnWalker,2000);
 function buy(div){
     const cost = Number(div.dataset.cost);
     if(money<cost) return;
-    money-=cost; moneyDiv.innerText='$'+money;
+    money -= cost; moneyDiv.innerText='$'+money;
     const slotIndex = collection.findIndex(s=>!s);
     if(slotIndex!==-1){
-        collection[slotIndex]={ type:div.dataset.type, rarity:div.dataset.rarity, mps:Number(div.dataset.mps) };
+        collection[slotIndex] = { type:div.dataset.type, rarity:div.dataset.rarity, mps:Number(div.dataset.mps) };
         ws.send(JSON.stringify({ type:'buy', slot:slotIndex, item:collection[slotIndex], itemId:div.dataset.id }));
     }
     div.remove();
@@ -152,19 +151,20 @@ setInterval(()=>{
     ws.send(JSON.stringify({ type:'update', collection, money }));
 },1000);
 
-// --- Steal Progress ---
-function showStealProgress(slot){
-    stealTarget = slot;
+// --- Steal mechanic ---
+function stealItem(targetSlot){
+    stealTarget = targetSlot;
     stealProgress = 0;
     stealInterval = setInterval(()=>{
         stealProgress += 1;
-        const bar = document.getElementById('stealProgressBar');
+        const bar = stealTarget.querySelector('.stealProgressBar');
         if(bar) bar.style.width = (stealProgress*100/15)+'%';
         if(stealProgress>=15){
             clearInterval(stealInterval);
             alert('Item stolen!');
+            stealTarget = null;
         }
-    }, 1000);
+    },1000);
 }
 
 document.addEventListener('keydown', e=>{
@@ -179,4 +179,3 @@ document.addEventListener('keydown', e=>{
 </script>
 </body>
 </html>
-

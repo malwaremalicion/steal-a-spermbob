@@ -5,104 +5,104 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Steal A Spermbob — Multiplayer</title>
 <style>
-  body{margin:0;font-family:Arial;background:#071018;color:#e6eef8}
-  #top{padding:8px 12px;display:flex;align-items:center;gap:12px;background:rgba(0,0,0,0.2)}
-  #money{font-weight:700} #status{margin-left:auto;color:#9aa6b2}
-  #main{display:flex;gap:12px;padding:12px}
-  #left{flex:1;background:linear-gradient(#05202b,#021018);padding:12px;border-radius:8px}
-  #road{height:180px;background:linear-gradient(#0b2630,#041018);position:relative;overflow:hidden;border-radius:6px}
-  .walker{position:absolute;display:flex;flex-direction:column;align-items:center;cursor:pointer;transition: left 0.2s linear, top 0.2s linear;}
-  .walker img{width:40px;height:40px}
-  #right{width:360px}
-  .panel{background:rgba(255,255,255,0.02);padding:12px;border-radius:8px;margin-bottom:12px}
-  .player-block{background:rgba(255,255,255,0.01);padding:8px;border-radius:8px;margin-bottom:8px}
-  .slots{display:flex;gap:6px;flex-wrap:wrap}
-  .slot{width:56px;height:56px;border-radius:8px;background:#07131a;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
-  .slot .meta{position:absolute;bottom:0;left:0;right:0;font-size:11px;text-align:center;background:linear-gradient(transparent,rgba(0,0,0,0.5))}
-  .steal-bar{position:absolute;left:0;bottom:0;height:6px;background:linear-gradient(90deg,#ef4444,#f97316);width:0%}
+body{margin:0;font-family:Arial;background:#071018;color:#e6eef8}
+#top{padding:8px 12px;display:flex;align-items:center;gap:12px;background:rgba(0,0,0,0.2)}
+#money{font-weight:700} #status{margin-left:auto;color:#9aa6b2}
+#main{display:flex;gap:12px;padding:12px}
+#left{flex:1;background:linear-gradient(#05202b,#021018);padding:12px;border-radius:8px}
+#road{height:180px;background:linear-gradient(#0b2630,#041018);position:relative;overflow:hidden;border-radius:6px}
+.walker{position:absolute;display:flex;flex-direction:column;align-items:center;cursor:pointer;transition:left 0.1s linear, top 0.1s linear;}
+.walker img{width:40px;height:40px}
+#right{width:360px}
+.panel{background:rgba(255,255,255,0.02);padding:12px;border-radius:8px;margin-bottom:12px}
+.player-block{background:rgba(255,255,255,0.01);padding:8px;border-radius:8px;margin-bottom:8px}
+.slots{display:flex;gap:6px;flex-wrap:wrap}
+.slot{width:56px;height:56px;border-radius:8px;background:#07131a;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
+.slot .meta{position:absolute;bottom:0;left:0;right:0;font-size:11px;text-align:center;background:linear-gradient(transparent,rgba(0,0,0,0.5))}
+.steal-bar{position:absolute;left:0;bottom:0;height:6px;background:linear-gradient(90deg,#ef4444,#f97316);width:0%}
 </style>
 </head>
 <body>
-  <div id="top">
-    <div id="money">Money: $<span id="moneyVal">30</span></div>
-    <div id="roomShow">Room: <span id="roomLabel">—</span></div>
-    <div id="status">Not connected</div>
-  </div>
+<div id="top">
+  <div id="money">Money: $<span id="moneyVal">30</span></div>
+  <div id="roomShow">Room: <span id="roomLabel">—</span></div>
+  <div id="status">Not connected</div>
+</div>
 
-  <div id="main">
-    <div id="left">
-      <h3>Road</h3>
-      <div id="road"></div>
-    </div>
-    <div id="right">
-      <div class="panel">
-        <input id="roomCode" placeholder="room code"/> <button id="join">Join</button>
-      </div>
-      <div id="collections" class="panel"></div>
-    </div>
+<div id="main">
+  <div id="left">
+    <h3>Road</h3>
+    <div id="road"></div>
   </div>
+  <div id="right">
+    <div class="panel">
+      <input id="roomCode" placeholder="room code"/> <button id="join">Join</button>
+    </div>
+    <div id="collections" class="panel"></div>
+  </div>
+</div>
 
 <audio id="bgm" src="bgm.mp3" loop autoplay></audio>
 
 <script>
-const WS_URL = 'wss://spermbob-server-production.up.railway.app';
-const SELL_HOLD_MS = 5000;
-const STEAL_TIMEOUT_MS = 15000;
+const WS_URL='wss://spermbob-server-production.up.railway.app';
+const SELL_HOLD_MS=5000;
+const STEAL_TIMEOUT_MS=15000;
+let ws=null,myId=null,roomCode=null;
+let players={},walkers=[];
+let walkerEls={};
 
-let ws=null, myId=null, roomCode=null;
-let players = {}, walkers = [];
-let walkerEls = {};
+// DOM refs
+const moneyVal=document.getElementById('moneyVal');
+const statusEl=document.getElementById('status');
+const road=document.getElementById('road');
+const roomLabel=document.getElementById('roomLabel');
+const joinBtn=document.getElementById('join');
+const roomCodeInp=document.getElementById('roomCode');
+const collectionsDiv=document.getElementById('collections');
 
-const moneyVal = document.getElementById('moneyVal');
-const statusEl = document.getElementById('status');
-const road = document.getElementById('road');
-const roomLabel = document.getElementById('roomLabel');
-const joinBtn = document.getElementById('join');
-const roomCodeInp = document.getElementById('roomCode');
-const collectionsDiv = document.getElementById('collections');
-
-joinBtn.addEventListener('click', ()=> {
-  const rc = roomCodeInp.value.trim() || 'lobby';
-  roomCode = rc;
-  roomLabel.textContent = roomCode;
+joinBtn.addEventListener('click',()=>{
+  const rc=roomCodeInp.value.trim()||'lobby';
+  roomCode=rc;
+  roomLabel.textContent=roomCode;
   connect();
 });
 
 function connect(){
-  if(ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
+  if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING)) return;
   setStatus('Connecting...');
-  ws = new WebSocket(WS_URL);
-  ws.addEventListener('open', ()=> {
+  ws=new WebSocket(WS_URL);
+  ws.addEventListener('open',()=>{
     setStatus('Connected');
-    const username = 'player' + Math.floor(Math.random()*9999);
-    ws.send(JSON.stringify({ type:'joinRoom', roomCode, username, money:30 }));
+    const username='player'+Math.floor(Math.random()*9999);
+    ws.send(JSON.stringify({type:'joinRoom',roomCode,username,money:30}));
   });
-  ws.addEventListener('message', ev => {
+  ws.addEventListener('message',ev=>{
     let msg;
-    try{ msg = JSON.parse(ev.data); }catch(e){return;}
+    try{msg=JSON.parse(ev.data);}catch(e){return;}
     handle(msg);
   });
-  ws.addEventListener('close', ()=> setStatus('Disconnected'));
-  ws.addEventListener('error', ()=> setStatus('Connection error'));
+  ws.addEventListener('close',()=>setStatus('Disconnected'));
+  ws.addEventListener('error',()=>setStatus('Connection error'));
 }
 
-function setStatus(s){ statusEl.textContent = s; }
+function setStatus(s){statusEl.textContent=s;}
 
 function handle(msg){
-  if(msg.type === 'roomUpdate'){
-    players = msg.players || {};
-    walkers = msg.walkers || [];
-    myId = msg.you || myId;
-    if(myId && players[myId]) moneyVal.textContent = Math.floor(players[myId].money || 0);
-    renderWalkersSmooth();
+  if(msg.type==='roomUpdate'){
+    players=msg.players||{};
+    walkers=msg.walkers||[];
+    myId=msg.you||myId;
+    if(myId&&players[myId]) moneyVal.textContent=Math.floor(players[myId].money||0);
+    renderWalkers();
     renderCollections();
     return;
   }
 }
 
-// Smooth walker rendering
-function renderWalkersSmooth(){
-  // remove old walkers not present anymore
+// Smooth walker movement
+function renderWalkers(){
+  if(!ws||ws.readyState!==WebSocket.OPEN) return;
   Object.keys(walkerEls).forEach(id=>{
     if(!walkers.find(w=>w.id===id)){
       walkerEls[id].remove();
@@ -111,54 +111,71 @@ function renderWalkersSmooth(){
   });
 
   walkers.forEach(w=>{
-    let el = walkerEls[w.id];
+    let el=walkerEls[w.id];
     if(!el){
-      el = document.createElement('div');
+      el=document.createElement('div');
       el.className='walker';
       el.dataset.id=w.id;
-      el.innerHTML = `<img src="${w.type==='bellbob'?'bellbob.png':'spermbob.png'}" style="width:40px;height:40px"><div style="color:#fff;font-size:12px">${w.rarity} $${w.cost}</div>`;
-      el.addEventListener('click', ()=> attemptBuy(w.id));
+      el.dataset.cost=w.cost;
+      el.dataset.type=w.type;
+      el.dataset.mps=w.mps;
+      el.dataset.rarity=w.rarity;
+      el.style.left=Math.random()*60+'%';
+      el.style.top=(20+Math.random()*100)+'px';
+      el.speedX=(Math.random()*0.5+0.2)*(Math.random()>0.5?1:-1);
+      el.speedY=(Math.random()*0.2+0.1)*(Math.random()>0.5?1:-1);
+      el.innerHTML=`<img src="${w.type==='bellbob'?'bellbob.png':'spermbob.png'}" style="width:40px;height:40px"><div style="color:#fff;font-size:12px">${w.rarity} $${w.cost}</div>`;
+      el.addEventListener('click',()=>attemptBuy(w.id));
       road.appendChild(el);
-      walkerEls[w.id] = el;
-      // initialize random start pos
-      el.style.left = Math.random()*60 + '%';
-      el.style.top = (20+Math.random()*100) + 'px';
+      walkerEls[w.id]=el;
     }
-    // move smoothly
-    const newLeft = Math.random()*60 + '%';
-    const newTop = (20+Math.random()*100) + 'px';
-    el.style.left = newLeft;
-    el.style.top = newTop;
   });
 }
 
+// Animation loop
+function animateWalkers(){
+  Object.values(walkerEls).forEach(el=>{
+    let left=parseFloat(el.style.left);
+    let top=parseFloat(el.style.top);
+    left+=el.speedX;
+    top+=el.speedY;
+    // bounce off edges
+    if(left<0){left=0; el.speedX*=-1;}
+    if(left>road.offsetWidth-40){left=road.offsetWidth-40; el.speedX*=-1;}
+    if(top<0){top=0; el.speedY*=-1;}
+    if(top>road.offsetHeight-40){top=road.offsetHeight-40; el.speedY*=-1;}
+    el.style.left=left+'px';
+    el.style.top=top+'px';
+  });
+  requestAnimationFrame(animateWalkers);
+}
+requestAnimationFrame(animateWalkers);
+
 function attemptBuy(itemId){
-  if(!myId || !players[myId]) { alert('not ready'); return; }
-  const free = players[myId].collection ? players[myId].collection.findIndex(x => !x) : 0;
-  if(free===-1){ alert('No free slot'); return; }
-  ws.send(JSON.stringify({ type:'buy', slot: free, itemId }));
-  const node = walkerEls[itemId];
-  if(node) { node.remove(); delete walkerEls[itemId]; }
+  if(!myId||!players[myId]) return;
+  const free=players[myId].collection.findIndex(x=>!x);
+  if(free===-1){alert('No free slot');return;}
+  ws.send(JSON.stringify({type:'buy',slot:free,itemId}));
+  const node=walkerEls[itemId];
+  if(node){node.remove();delete walkerEls[itemId];}
 }
 
 function renderCollections(){
-  collectionsDiv.innerHTML = '';
-  const ids = Object.keys(players);
-  ids.forEach(id=>{
-    const p = players[id];
-    const block = document.createElement('div'); block.className='player-block';
-    block.innerHTML=`<div style="font-weight:700">${p.username || 'player'}</div>`;
-    const slots = document.createElement('div'); slots.className='slots';
-    const arr = p.collection || Array(8).fill(null);
-    arr.forEach((it, idx)=>{
-      const s = document.createElement('div'); s.className='slot';
+  collectionsDiv.innerHTML='';
+  Object.keys(players).forEach(id=>{
+    const p=players[id];
+    const block=document.createElement('div'); block.className='player-block';
+    block.innerHTML=`<div style="font-weight:700">${p.username||'player'}</div>`;
+    const slots=document.createElement('div'); slots.className='slots';
+    (p.collection||Array(8).fill(null)).forEach((it,idx)=>{
+      const s=document.createElement('div'); s.className='slot';
       if(it){
         const img=document.createElement('img'); img.src=(it.type==='bellbob')?'bellbob.png':'spermbob.png';
         img.style.width='48px'; img.style.height='48px'; s.appendChild(img);
         const meta=document.createElement('div'); meta.className='meta'; meta.textContent=`${it.rarity} $${it.mps}/s`;
         s.appendChild(meta);
-        if(id===myId) attachHoldSell(s, idx);
-        else attachHoldSteal(s, idx, id);
+        if(id===myId) attachHoldSell(s,idx);
+        else attachHoldSteal(s,idx,id);
       } else s.style.opacity=0.6;
       slots.appendChild(s);
     });
@@ -167,13 +184,13 @@ function renderCollections(){
   });
 }
 
-function attachHoldSell(el, slotIndex){
-  let raf=null, start=null, bar=null;
+function attachHoldSell(el,slotIndex){
+  let raf=null,start=null,bar=null;
   function tick(ts){
     if(!start) start=ts;
     const pct=Math.min((ts-start)/SELL_HOLD_MS*100,100);
     bar.style.width=pct+'%';
-    if(pct>=100){ cancel(); ws.send(JSON.stringify({ type:'sell', slot:slotIndex })); }
+    if(pct>=100){ cancel(); ws.send(JSON.stringify({type:'sell',slot:slotIndex})); }
     else raf=requestAnimationFrame(tick);
   }
   function startHold(){
@@ -181,34 +198,29 @@ function attachHoldSell(el, slotIndex){
     bar=document.createElement('div'); bar.className='steal-bar'; el.appendChild(bar);
     start=null; raf=requestAnimationFrame(tick);
   }
-  function cancel(){ if(raf) cancelAnimationFrame(raf); raf=null; start=null; if(bar){bar.remove(); bar=null;} }
-  el.addEventListener('mousedown', e=>{if(e.button!==0) return; startHold();});
-  el.addEventListener('mouseup', cancel); el.addEventListener('mouseleave', cancel);
-  el.addEventListener('contextmenu', e=>{ e.preventDefault(); ws.send(JSON.stringify({ type:'sell', slot:slotIndex })); });
+  function cancel(){if(raf) cancelAnimationFrame(raf); raf=null; start=null; if(bar){bar.remove(); bar=null;}}
+  el.addEventListener('mousedown',e=>{if(e.button!==0) return; startHold();});
+  el.addEventListener('mouseup',cancel); el.addEventListener('mouseleave',cancel);
+  el.addEventListener('contextmenu',e=>{e.preventDefault(); ws.send(JSON.stringify({type:'sell',slot:slotIndex}));});
 }
 
-function attachHoldSteal(el, slotIndex, victimId){
-  let raf=null, start=null, bar=null;
-  function tick(ts){ if(!start) start=ts; const pct=Math.min((ts-start)/STEAL_TIMEOUT_MS*100,100);
-    bar.style.width=pct+'%';
-    if(pct>=100){ cancel(); } else raf=requestAnimationFrame(tick); }
-  function startHold(){
-    if(bar) bar.remove();
-    bar=document.createElement('div'); bar.className='steal-bar'; el.appendChild(bar);
-    ws.send(JSON.stringify({ type:'stealStart', victimId, slot:slotIndex }));
-    start=null; raf=requestAnimationFrame(tick);
-  }
-  function cancel(){ if(raf) cancelAnimationFrame(raf); raf=null; start=null; if(bar){bar.remove(); bar=null;} }
-  el.addEventListener('mousedown', e=>{if(e.button!==0) return; startHold();});
-  el.addEventListener('mouseup', cancel); el.addEventListener('mouseleave', cancel);
+function attachHoldSteal(el,slotIndex,victimId){
+  let raf=null,start=null,bar=null;
+  function tick(ts){ if(!start) start=ts; const pct=Math.min((ts-start)/STEAL_TIMEOUT_MS*100,100); bar.style.width=pct+'%';
+    if(pct>=100){cancel();}else raf=requestAnimationFrame(tick);}
+  function startHold(){if(bar) bar.remove(); bar=document.createElement('div'); bar.className='steal-bar'; el.appendChild(bar);
+    ws.send(JSON.stringify({type:'stealStart',victimId,slot:slotIndex})); start=null; raf=requestAnimationFrame(tick);}
+  function cancel(){if(raf) cancelAnimationFrame(raf); raf=null; start=null; if(bar){bar.remove(); bar=null;}}
+  el.addEventListener('mousedown',e=>{if(e.button!==0) return; startHold();});
+  el.addEventListener('mouseup',cancel); el.addEventListener('mouseleave',cancel);
 }
 
-setInterval(()=>{ if(myId && players[myId]) moneyVal.textContent=Math.floor(players[myId].money||0); }, 500);
+setInterval(()=>{if(myId&&players[myId]) moneyVal.textContent=Math.floor(players[myId].money||0);},500);
 
-document.addEventListener('keydown', e=>{
+document.addEventListener('keydown',e=>{
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
     if(!myId) return;
-    ws.send(JSON.stringify({ type:'stealBlocked', victimId: myId, slot: null }));
+    ws.send(JSON.stringify({type:'stealBlocked',victimId:myId,slot:null}));
   }
 });
 </script>

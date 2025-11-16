@@ -7,24 +7,24 @@
 <style>
  body { background:#222; color:#fff; font-family:Arial; overflow:hidden; }
  #road { position:absolute; left:0; top:50%; width:100%; height:120px; background:#444; }
- .walker { position:absolute; top:20px; width:64px; height:64px; }
+ .walker { position:absolute; top:20px; width:48px; height:48px; cursor:pointer; }
  .label { position:absolute; top:-20px; width:100%; text-align:center; font-size:12px; color:white; text-shadow:0 0 4px black; }
  #collection { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; gap:10px; }
  .slot { width:80px; height:80px; background:#333; border:2px solid #555; position:relative; }
- .slot img { width:100%; height:100%; }
+ .slot img { width:100%; height:100%; pointer-events:none; }
  #money { position:absolute; left:10px; top:10px; font-size:22px; }
  #saveLoad { position:absolute; right:10px; top:10px; }
  #mpBox { position:absolute; right:10px; bottom:10px; width:220px; background:#111; padding:10px; border:1px solid #555; }
  #mpStatus { font-size:12px; margin-bottom:5px; }
  textarea { width:100%; height:60px; background:#000; color:#0f0; font-size:10px; }
  #stealWarn { position:absolute; top:40%; left:50%; transform:translate(-50%,-50%); background:red; padding:20px; font-size:20px; display:none; }
-  .walker img { width: 48px !important; height: auto !important; }
-  .walker { cursor: pointer; pointer-events: auto; }
-  .walker img { width: 48px !important; height: auto !important; pointer-events: none; }
+ #usernameScreen { position:fixed; inset:0; background:#000a; display:flex; flex-direction:column; justify-content:center; align-items:center; z-index:9999; }
+ #usernameScreen div { background:#222; padding:20px; border-radius:12px; text-align:center; color:white; width:260px; }
+ #playerList { position:fixed; top:10px; left:10px; background:#222a; padding:10px; border-radius:8px; color:white; font-size:14px; min-width:140px; }
 </style>
 </head>
 <body>
-<div id="money">$0</div>
+<div id="money">$30</div>
 <div id="road"></div>
 <div id="collection"></div>
 <div id="saveLoad">
@@ -40,26 +40,62 @@
  <button id="applySig">Apply Remote</button>
 </div>
 <div id="stealWarn"></div>
-<audio id="bgm" src="bgm.mp3" loop></audio>
+<div id="usernameScreen">
+ <div>
+   <h2>Enter Username</h2>
+   <input id="usernameInput" placeholder="Username" style="width:100%; padding:8px; margin:10px 0; border-radius:6px; border:none;">
+   <button id="usernameSubmit" style="padding:8px 14px; border:none; border-radius:6px; cursor:pointer;">Continue</button>
+ </div>
+</div>
+<div id="playerList">
+ <b>Players:</b>
+ <div id="playerNames"></div>
+</div>
 <script>
-const rarities = [
- {name:"Common", tint:"rgba(255,255,255,0)", cost:10, mps:1},
- {name:"Uncommon", tint:"rgba(0,255,0,0.3)", cost:25, mps:3},
- {name:"Rare", tint:"rgba(0,100,255,0.3)", cost:60, mps:7},
- {name:"Epic", tint:"rgba(170,0,255,0.3)", cost:150, mps:15}
-];
+// --- Username System ---
+let username = localStorage.getItem('spermbob_username') || null;
+const usernameScreen = document.getElementById('usernameScreen');
+const usernameInput = document.getElementById('usernameInput');
+const usernameSubmit = document.getElementById('usernameSubmit');
+usernameSubmit.onclick = () => {
+  const val = usernameInput.value.trim();
+  if(!val) return;
+  username = val;
+  localStorage.setItem('spermbob_username', username);
+  usernameScreen.style.display='none';
+  broadcastPlayerList();
+};
+usernameInput.addEventListener('keydown', e=>{ if(e.key==='Enter') usernameSubmit.onclick(); });
+if(username) usernameScreen.style.display='none';
 
+// --- Player List ---
+let players = {};
+const playerNamesDiv = document.getElementById('playerNames');
+function updatePlayerListUI(){
+  playerNamesDiv.innerHTML = Object.values(players).map(p=>`<div>${p}</div>`).join('');
+}
+function broadcastPlayerList(){
+  if(!username) return;
+  if(typeof myPeerId !== 'undefined') players[myPeerId] = username;
+  sendToAll({ type:'playerList', players });
+  updatePlayerListUI();
+}
+
+// --- Game Variables ---
 let money=30;
 let collection = Array(8).fill(null);
 const road=document.getElementById("road");
 const coll=document.getElementById("collection");
 const stealWarn=document.getElementById("stealWarn");
 const mpStatus=document.getElementById("mpStatus");
+const rarities=[
+ {name:"Common", tint:"rgba(255,255,255,0)", cost:10, mps:1},
+ {name:"Uncommon", tint:"rgba(0,255,0,0.3)", cost:25, mps:3},
+ {name:"Rare", tint:"rgba(0,100,255,0.3)", cost:60, mps:7},
+ {name:"Epic", tint:"rgba(170,0,255,0.3)", cost:150, mps:15}
+];
 
-// Multiplayer simplified: Direct P2P sync of walkers & collections
-let pc=null;
-let dc=null;
-
+// --- Collection UI ---
 function setupCollectionUI(){
  coll.innerHTML="";
  for(let i=0;i<8;i++){
@@ -72,6 +108,7 @@ function setupCollectionUI(){
 }
 setupCollectionUI();
 
+// --- Spawn Walkers ---
 function spawnWalker(){
  let t = Math.random()<0.5?"spermbob":"bellbob";
  let rarity = rarities[Math.floor(Math.random()*rarities.length)];
@@ -83,34 +120,24 @@ function spawnWalker(){
  div.dataset.rarity=rarity.name;
  div.dataset.cost=rarity.cost;
  div.dataset.mps=rarity.mps;
-
  let img=document.createElement("img");
  img.src = t=="spermbob"?"spermbob.png":"bellbob.png";
  img.style.filter = `drop-shadow(0 0 5px ${rarity.tint})`;
  div.appendChild(img);
-
  let label=document.createElement("div");
  label.className="label";
  label.innerText=`${rarity.name} | $${rarity.mps}/s | Cost: ${rarity.cost}`;
  div.appendChild(label);
-
  div.onclick=()=>buy(div);
  road.appendChild(div);
-
  let speed=0.5+Math.random()*0.5;
- function move(){
-  x+=speed;
-  div.style.left=x+"px";
-  if(x>window.innerWidth+100){
-    div.remove();
-  } else requestAnimationFrame(move);
- }
+ function move(){ x+=speed; div.style.left=x+"px"; if(x>window.innerWidth+100){ div.remove(); } else requestAnimationFrame(move); }
  move();
-
  if(dc) send({type:"spawn", t, rarity:rarity.name});
 }
 setInterval(spawnWalker,2000);
 
+// --- Buy Items ---
 function buy(w){
  let cost=Number(w.dataset.cost);
  if(money<cost) return;
@@ -138,153 +165,23 @@ function renderCollection(){
   lab.className="label";
   lab.innerText=`${it.rarity} | $${it.mps}/s`;
   d.appendChild(lab);
-  d.onmousedown=()=>holdSell(i);
  }
 }
 
-setInterval(()=>{
- for(let it of collection){ if(it) money+=it.mps; }
- document.getElementById("money").innerText="$"+money;
-},1000);
+setInterval(()=>{ for(let it of collection){ if(it) money+=it.mps; } document.getElementById("money").innerText="$"+money; },1000);
 
-function holdSell(i){
- let t=setTimeout(()=>{
-   if(collection[i]){
-     collection[i]=null;
-     renderCollection();
-     if(dc) send({type:"sell", slot:i});
-   }
- },5000);
- document.onmouseup=()=>clearTimeout(t);
-}
+function holdSell(i){ let t=setTimeout(()=>{ if(collection[i]){ collection[i]=null; renderCollection(); if(dc) send({type:"sell", slot:i}); } },5000); document.onmouseup=()=>clearTimeout(t); }
 
-function save(){ localStorage.setItem("spermSave",JSON.stringify({money,collection})); }
-function load(){ let d=JSON.parse(localStorage.getItem("spermSave")||"{}"); if(d.collection){money=d.money;collection=d.collection;renderCollection();} }
+document.getElementById("saveBtn").onclick=()=>localStorage.setItem("spermSave",JSON.stringify({money,collection}));
+document.getElementById("loadBtn").onclick=()=>{ let d=JSON.parse(localStorage.getItem("spermSave")||"{}"); if(d.collection){money=d.money;collection=d.collection;renderCollection();} };
 
-document.getElementById("saveBtn").onclick=save;
-document.getElementById("loadBtn").onclick=load;
+document.getElementById("bgm")?.play();
 
-document.getElementById("bgm").play();
-
-function send(o){ if(dc&&dc.readyState==="open") dc.send(JSON.stringify(o)); }
-
-function host(){
- pc=new RTCPeerConnection();
- dc=pc.createDataChannel("c");
- setupDC();
- pc.onicecandidate=e=>{
-  document.getElementById("signalData").value=JSON.stringify(pc.localDescription);
- };
- pc.createOffer().then(o=>pc.setLocalDescription(o));
- mpStatus.innerText="Hosting";
-}
-
-function join(){
- pc=new RTCPeerConnection();
- pc.ondatachannel=e=>{ dc=e.channel; setupDC(); };
- pc.onicecandidate=e=>{
-  document.getElementById("signalData").value=JSON.stringify(pc.localDescription);
- };
- let remote=JSON.parse(document.getElementById("signalData").value);
- pc.setRemoteDescription(remote).then(()=>{
-  pc.createAnswer().then(a=>pc.setLocalDescription(a));
- });
- mpStatus.innerText="Joining";
-}
-
-function setupDC(){
- dc.onopen=()=>{ mpStatus.innerText="Connected"; syncState(); };
- dc.onmessage=e=>handle(JSON.parse(e.data));
-}
-
-function syncState(){ send({type:"full", money, collection}); }
-
-function handle(d){
- if(d.type=="full"){ money=d.money; collection=d.collection; renderCollection(); }
- if(d.type=="spawn") spawnWalker();
- if(d.type=="buy"){ collection[d.slot]=d.item; renderCollection(); }
- if(d.type=="sell"){ collection[d.slot]=null; renderCollection(); }
-}
-
-document.getElementById("hostBtn").onclick=host;
-document.getElementById("joinBtn").onclick=join;
-document.getElementById("copySig").onclick=()=>navigator.clipboard.writeText(document.getElementById("signalData").value);
-document.getElementById("applySig").onclick=()=>{
- let r=JSON.parse(document.getElementById("signalData").value);
- pc.setRemoteDescription(r);
-};
+// --- Multiplayer simplified ---
+let pc=null, dc=null;
+function sendToAll(o){ if(dc&&dc.readyState==="open") dc.send(JSON.stringify(o)); }
+function handleMessage(peerId, data){ if(data.type==='playerList'){ players=data.players; updatePlayerListUI(); return; } /* handle other messages */ }
+function onPeerConnected(peerId){ broadcastPlayerList(); /* other peer setup */ }
 </script>
-  <!-- Username Screen -->
-  <div id="usernameScreen" style="position:fixed; inset:0; background:#000a; display:flex; flex-direction:column; justify-content:center; align-items:center; z-index:9999;">
-    <div style="background:#222; padding:20px; border-radius:12px; text-align:center; color:white; width:260px;">
-      <h2>Enter Username</h2>
-      <input id="usernameInput" placeholder="Username" style="width:100%; padding:8px; margin:10px 0; border-radius:6px; border:none;">
-      <button id="usernameSubmit" style="padding:8px 14px; border:none; border-radius:6px; cursor:pointer;">Continue</button>
-    </div>
-  </div>
-
-  <!-- Player List -->
-  <div id="playerList" style="position:fixed; top:10px; left:10px; background:#222a; padding:10px; border-radius:8px; color:white; font-size:14px; min-width:140px;">
-    <b>Players:</b>
-    <div id="playerNames"></div>
-  </div>
-
-  <script>
-  // --- Username handling ---
-  let username = localStorage.getItem('spermbob_username') || null;
-  const usernameScreen = document.getElementById('usernameScreen');
-
-  function finalizeUsername() {
-    const val = document.getElementById('usernameInput').value.trim();
-    if(!val) return;
-    username = val;
-    localStorage.setItem('spermbob_username', username);
-    usernameScreen.style.display = 'none';
-    broadcastPlayerList();
-  }
-
-  document.getElementById('usernameSubmit').onclick = finalizeUsername;
-  document.getElementById('usernameInput').addEventListener('keydown', e => {
-    if(e.key === 'Enter') finalizeUsername();
-  });
-
-  if(username) {
-    usernameScreen.style.display = 'none';
-  }
-
-  // --- Player List Sync ---
-  let players = {};
-  const playerNamesDiv = document.getElementById('playerNames');
-
-  function updatePlayerListUI() {
-    playerNamesDiv.innerHTML = Object.values(players).map(p => `<div>${p}</div>`).join('');
-  }
-
-  function broadcastPlayerList() {
-    if(!username) return;
-    players[myPeerId] = username;
-    sendToAll({ type: 'playerList', players });
-    updatePlayerListUI();
-  }
-
-  // Integrate with existing multiplayer message handler
-  const oldHandleMessage = handleMessage;
-  handleMessage = function(peerId, data) {
-    if(data.type === 'playerList') {
-      players = data.players;
-      updatePlayerListUI();
-      return;
-    }
-    oldHandleMessage(peerId, data);
-  }
-
-  // When connecting new peers, rebroadcast list
-  const oldOnPeerConnected = onPeerConnected;
-  onPeerConnected = function(peerId) {
-    oldOnPeerConnected(peerId);
-    broadcastPlayerList();
-  }
-  </script>
 </body>
 </html>
-

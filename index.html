@@ -103,11 +103,16 @@
 <audio id="bgm" src="bgm.mp3" loop></audio>
 
 <script>
-const WS_URL = 'wss://spermbob-server.onrender.com';
+/* ================= CONFIG ================= */
+const WS_URL = 'wss://spermbob-server.onrender.com'; // <--- your Render backend
 const START_MONEY = 30;
 const SLOTS = 8;
 
-let ws = null, playerId = null, username = null, roomCode = null;
+/* ================= STATE ================= */
+let ws = null;
+let playerId = null;
+let username = null;
+let roomCode = null;
 let money = START_MONEY;
 let collection = Array(SLOTS).fill(null);
 let players = {};
@@ -120,6 +125,7 @@ const rarityFilter = {
   'Epic': 'drop-shadow(0 0 10px rgba(200,50,255,0.18))'
 };
 
+/* ================= DOM ================= */
 const moneyVal = document.getElementById('moneyVal');
 const statusEl = document.getElementById('status');
 const playerNamesEl = document.getElementById('playerNames');
@@ -138,143 +144,178 @@ const createRoomBtn = document.getElementById('createRoom');
 const joinRoomBtn = document.getElementById('joinRoom');
 
 document.getElementById('saveBtn').onclick = ()=> { localStorage.setItem('spermbob_save', JSON.stringify({ money, collection })); alert('Saved locally'); };
-document.getElementById('loadBtn').onclick = ()=> { const d = JSON.parse(localStorage.getItem('spermbob_save')||'null'); if(d){ money=d.money||money; collection=d.collection||collection; updateMoneyUI(); renderCollections(); safeSend({type:'update', collection, money}); } };
-document.getElementById('resetBtn').onclick = ()=> { if(confirm('Reset save?')){ money=START_MONEY; collection=Array(SLOTS).fill(null); updateMoneyUI(); renderCollections(); safeSend({type:'update', collection, money}); } };
+document.getElementById('loadBtn').onclick = ()=> { const d = JSON.parse(localStorage.getItem('spermbob_save')||'null'); if(d){ money = d.money||money; collection = d.collection||collection; updateMoneyUI(); renderCollections(); safeSend({type:'update', collection, money}); } };
+document.getElementById('resetBtn').onclick = ()=> { if(confirm('Reset save?')){ money = START_MONEY; collection = Array(SLOTS).fill(null); updateMoneyUI(); renderCollections(); safeSend({type:'update', collection, money}); } };
 document.getElementById('toggleBgm').onclick = ()=> { if(bgm.paused) bgm.play(); else bgm.pause(); };
 
+/* ================= HELPERS ================= */
 function setStatus(s){ statusEl.textContent = s; }
 function updateMoneyUI(){ moneyVal.textContent = Math.floor(money); }
-function safeSend(obj){ try{ if(ws && ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(obj)); } catch(e){ console.warn('safeSend failed', e); } }
+function safeSend(obj){
+  try{
+    if(ws && ws.readyState === WebSocket.OPEN){
+      ws.send(JSON.stringify(obj));
+    }
+  }catch(e){ console.error('safeSend error', e); }
+}
 
+/* ================= USER JOIN ================= */
 enterBtn.addEventListener('click', ()=> {
-  const n=usernameInput.value.trim();
-  const rc=roomInput.value.trim()||Math.random().toString(36).slice(2,6);
+  const n = usernameInput.value.trim();
+  const rc = roomInput.value.trim() || Math.random().toString(36).slice(2,6);
   if(!n) return alert('Pick a username');
-  username=n; roomCode=rc;
-  usernameScreen.style.display='none';
-  roomCodeField.value=roomCode;
-  roomLabel.textContent=roomCode;
+  username = n; roomCode = rc;
+  usernameScreen.style.display = 'none';
+  roomCodeField.value = roomCode;
+  roomLabel.textContent = roomCode;
   bgm.play().catch(()=>{});
   connectWS();
 });
 
-usernameInput.addEventListener('keydown', e=>{ if(e.key==='Enter') enterBtn.click(); });
-roomInput.addEventListener('keydown', e=>{ if(e.key==='Enter') enterBtn.click(); });
+usernameInput.addEventListener('keydown', (e)=> { if(e.key==='Enter') enterBtn.click(); });
+roomInput.addEventListener('keydown', (e)=> { if(e.key==='Enter') enterBtn.click(); });
 
-createRoomBtn.addEventListener('click', ()=>{ const c=Math.random().toString(36).slice(2,6); roomCodeField.value=c; roomInput.value=c; roomCode=c; roomLabel.textContent=c; });
-joinRoomBtn.addEventListener('click', ()=>{ const c=roomCodeField.value.trim(); if(!c) return alert('enter room code'); roomInput.value=c; roomCode=c; if(ws && ws.readyState===WebSocket.OPEN) safeSend({type:'joinRoom', username, roomCode:c}); else { usernameScreen.style.display='none'; connectWS(); } });
+createRoomBtn.addEventListener('click', ()=> {
+  const c = Math.random().toString(36).slice(2,6); roomCodeField.value = c; roomInput.value = c; roomCode = c; roomLabel.textContent = c;
+});
+joinRoomBtn.addEventListener('click', ()=> {
+  const c = roomCodeField.value.trim(); if(!c) return alert('enter room code'); roomInput.value = c; roomCode = c;
+  if(ws && ws.readyState===WebSocket.OPEN) safeSend({ type:'joinRoom', username, roomCode: c });
+  else { usernameScreen.style.display='none'; connectWS(); }
+});
 
-let reconnectTimer=null;
+/* ================= WEBSOCKET ================= */
+let reconnectTimer = null;
 function connectWS(){
-  if(ws && (ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING)) return;
+  if(ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
   setStatus('Connecting...');
-  try{ ws=new WebSocket(WS_URL); } catch(e){ console.error(e); setStatus('Connection failed'); return; }
+  ws = new WebSocket(WS_URL);
 
-  ws.addEventListener('open', ()=>{ setStatus('Connected'); safeSend({type:'joinRoom', username, roomCode}); safeSend({type:'update', collection, money}); });
-  ws.addEventListener('message', ev=>{ let d; try{d=JSON.parse(ev.data);}catch(e){return;} handleMessage(d); });
-  ws.addEventListener('close', ()=>{ setStatus('Disconnected — reconnecting...'); Object.keys(activeSteals).forEach(k=>stopStealUI(keyToObj(k))); activeSteals={}; clearTimeout(reconnectTimer); reconnectTimer=setTimeout(connectWS,2000); });
-  ws.addEventListener('error', err=>{ console.error(err); setStatus('Connection error'); });
+  ws.addEventListener('open', ()=> {
+    setStatus('Connected');
+    safeSend({ type:'joinRoom', username, roomCode });
+    safeSend({ type:'update', collection, money });
+  });
+
+  ws.addEventListener('message', ev => {
+    let data;
+    try{ data = JSON.parse(ev.data); } catch(e){ return; }
+    handleMessage(data);
+  });
+
+  ws.addEventListener('close', ()=> {
+    setStatus('Disconnected — reconnecting...');
+    Object.keys(activeSteals).forEach(k=>stopStealUI(keyToObj(k)));
+    activeSteals={};
+    clearTimeout(reconnectTimer);
+    reconnectTimer=setTimeout(connectWS,2000);
+  });
+
+  ws.addEventListener('error', ()=> setStatus('Connection error'));
 }
 
+/* ================= MESSAGE HANDLER ================= */
 function handleMessage(msg){
-  if(msg.type==='roomUpdate' && msg.players){ players=msg.players; if(msg.you) playerId=msg.you; if(playerId&&players[playerId]&&!collection.some(Boolean)){ collection=players[playerId].collection.slice(); money=players[playerId].money||money; updateMoneyUI(); } renderCollections(); renderPlayerList(); return; }
-  if(msg.type==='buy' && msg.itemId){ document.querySelectorAll('.walker').forEach(w=>{ if(w.dataset.id===msg.itemId) w.remove(); }); return; }
-  if(msg.type==='stealStart'){ startStealBar(msg.thiefId,msg.victimId,msg.slot); if(msg.victimId===playerId) alert(`Someone is stealing your slot ${msg.slot}! Press arrow key to block.`); return; }
+  if(msg.type==='roomUpdate'){
+    players = msg.players || {};
+    if(msg.you) playerId = msg.you;
+    if(playerId && players[playerId] && !collection.some(Boolean)){
+      collection = players[playerId].collection.slice();
+      money = players[playerId].money ?? money;
+      updateMoneyUI();
+    }
+    renderCollections();
+    renderPlayerList();
+    return;
+  }
+  if(msg.type==='buy' && msg.itemId){
+    document.querySelectorAll('.walker').forEach(w=>{if(w.dataset.id===msg.itemId) w.remove();});
+    return;
+  }
+  if(msg.type==='stealStart'){ startStealBar(msg.thiefId,msg.victimId,msg.slot); if(msg.victimId===playerId) alert('Someone is stealing your item! Press arrow key to block.'); return; }
   if(msg.type==='stealBlocked'){ stopStealBar(msg.thiefId,msg.victimId,msg.slot); if(msg.victimId===playerId) alert('You blocked a steal!'); return; }
-  if(msg.type==='stealSuccess'){ stopStealBar(msg.thiefId,msg.victimId,msg.slot); if(msg.victimId===playerId) alert('One of your items was stolen!'); if(msg.thiefId===playerId) alert('You stole an item!'); return; }
+  if(msg.type==='stealSuccess'){ stopStealBar(msg.thiefId,msg.victimId,msg.slot); if(msg.victimId===playerId) alert('Item stolen!'); if(msg.thiefId===playerId) alert('You stole an item!'); return; }
 }
 
+/* ================= UI RENDER ================= */
 function renderPlayerList(){
   playerNamesEl.innerHTML='';
-  const ids=Object.keys(players);
+  const ids = Object.keys(players);
   if(ids.length===0) playerNamesEl.textContent='—';
-  ids.forEach(id=>{ const d=document.createElement('div'); d.textContent=(players[id].username||'player')+(id===playerId?' (You)':''); playerNamesEl.appendChild(d); });
+  ids.forEach(id=>{const d=document.createElement('div'); d.textContent=(players[id].username||'player')+(id===playerId?' (You)':''); playerNamesEl.appendChild(d);});
 }
 
 function renderCollections(){
   collectionsArea.innerHTML='';
-  const ids=Object.keys(players); const sorted=[]; if(playerId&&players[playerId]) sorted.push(playerId); ids.forEach(id=>{ if(id!==playerId) sorted.push(id); });
+  const ids = Object.keys(players);
+  const sorted=[];
+  if(playerId && players[playerId]) sorted.push(playerId);
+  ids.forEach(id=>{if(id!==playerId) sorted.push(id);});
+
   sorted.forEach(id=>{
-    const p=players[id]; const block=document.createElement('div'); block.className='player-block';
-    const title=document.createElement('div'); title.className='player-name'; title.textContent=(p?.username||'player')+(id===playerId?' (You)':''); block.appendChild(title);
-    const slots=document.createElement('div'); slots.className='slots';
-    const arr=(p&&p.collection)?p.collection:Array(SLOTS).fill(null);
+    const p = players[id];
+    const block = document.createElement('div');
+    block.className='player-block';
+    const title = document.createElement('div');
+    title.className='player-name';
+    title.textContent=(p?.username||'player')+(id===playerId?' (You)':'');
+    block.appendChild(title);
+    const slots=document.createElement('div');
+    slots.className='slots';
+    const arr = p.collection||Array(SLOTS).fill(null);
     for(let i=0;i<SLOTS;i++){
       const slot=document.createElement('div'); slot.className='slot';
       if(arr[i]){
-        const it=arr[i]; const img=document.createElement('img'); img.src=(it.type==='bellbob')?'bellbob.png':'spermbob.png'; img.style.filter=rarityFilter[it.rarity]||''; slot.appendChild(img);
+        const it=arr[i];
+        const img=document.createElement('img'); img.src=(it.type==='bellbob')?'bellbob.png':'spermbob.png'; img.style.filter=rarityFilter[it.rarity]||''; slot.appendChild(img);
         const meta=document.createElement('div'); meta.className='meta'; meta.textContent=`${it.rarity} | $${it.mps}/s`; slot.appendChild(meta);
-
         if(id===playerId){
           let hold=null;
-          slot.addEventListener('mousedown',e=>{ if(e.button!==0) return; hold=setTimeout(()=>{ const refund=Math.max(1,Math.floor(it.mps*5)); money+=refund; updateMoneyUI(); collection[i]=null; safeSend({type:'update', collection, money}); renderCollections(); },5000); });
-          slot.addEventListener('mouseup',()=>{ clearTimeout(hold); });
-          slot.addEventListener('mouseleave',()=>{ clearTimeout(hold); });
-          slot.addEventListener('contextmenu',e=>{ e.preventDefault(); const refund=Math.max(1,Math.floor(it.mps*5)); money+=refund; updateMoneyUI(); collection[i]=null; safeSend({type:'update', collection, money}); renderCollections(); });
+          slot.addEventListener('mousedown',e=>{if(e.button!==0) return; hold=setTimeout(()=>{money+=Math.max(1,Math.floor(it.mps*5));updateMoneyUI();collection[i]=null; safeSend({type:'update',collection,money}); renderCollections();},5000);});
+          slot.addEventListener('mouseup',()=>clearTimeout(hold));
+          slot.addEventListener('mouseleave',()=>clearTimeout(hold));
+          slot.addEventListener('contextmenu',e=>{e.preventDefault(); money+=Math.max(1,Math.floor(it.mps*5)); updateMoneyUI(); collection[i]=null; safeSend({type:'update',collection,money}); renderCollections(); });
         } else {
-          slot.addEventListener('click',()=>{ safeSend({type:'stealStart', victimId:id, slot:i}); });
+          slot.addEventListener('click',()=> safeSend({type:'stealStart',victimId:id,slot:i}));
         }
       } else slot.style.opacity=0.6;
       slots.appendChild(slot);
     }
-    block.appendChild(slots); collectionsArea.appendChild(block);
+    block.appendChild(slots);
+    collectionsArea.appendChild(block);
   });
 }
 
+/* ================= Walkers & Buying ================= */
 function spawnWalker(){
   const rarities=[{name:'Common',cost:10,mps:1},{name:'Uncommon',cost:25,mps:3},{name:'Rare',cost:60,mps:7},{name:'Epic',cost:150,mps:15}];
-  const types=['spermbob','bellbob']; const type=types[Math.floor(Math.random()*types.length)]; const rar=rarities[Math.floor(Math.random()*rarities.length)];
+  const types=['spermbob','bellbob']; const type=types[Math.floor(Math.random()*types.length)];
+  const rar=rarities[Math.floor(Math.random()*rarities.length)];
   const el=document.createElement('div'); el.className='walker'; el.dataset.id=Math.random().toString(36).slice(2,9); el.dataset.type=type; el.dataset.rarity=rar.name; el.dataset.cost=rar.cost; el.dataset.mps=rar.mps; el.style.left='-60px'; el.style.top=(16+Math.random()*96)+'px';
-  const img=document.createElement('img'); img.src=(type==='bellbob')?'bellbob.png':'spermbob.png'; img.style.filter=rar.name?rarityFilter[rar.name]:''; el.appendChild(img);
-  const tag=document.createElement('div'); tag.className='tag'; tag.textContent=`${rar.name} • $${rar.cost} • $${rar.mps}/s`; el.appendChild(tag);
-  el.addEventListener('click',()=>attemptBuy(el)); road.appendChild(el);
-
-  let x=-80; const speed=0.5+Math.random()*1.2;
-  function step(){ x+=speed; el.style.left=x+'px'; if(x>window.innerWidth+80) el.remove(); else requestAnimationFrame(step); }
-  step();
+  const img=document.createElement('img'); img.src=(type==='bellbob')?'bellbob.png':'spermbob.png'; img.style.filter=rarityFilter[rar.name]||''; el.appendChild(img);
+  const tag=document.createElement('div'); tag.className='tag'; tag.textContent=`${rar.name} | $${rar.cost}`; el.appendChild(tag);
+  el.addEventListener('click',()=>{if(money>=rar.cost){money-=rar.cost;updateMoneyUI();collection[collection.findIndex(c=>!c)]= {type,rarity:rar.name,mps:rar.mps}; safeSend({type:'buy',item:el.dataset.id}); el.remove(); renderCollections();}} );
+  road.appendChild(el);
+  let x=-60;
+  const moveInt=setInterval(()=>{x+=2; if(x>road.clientWidth){el.remove(); clearInterval(moveInt);} else el.style.left=x+'px';},50);
 }
 
-function attemptBuy(el){
-  const cost=Number(el.dataset.cost); if(cost>money){ alert('Not enough money'); return; }
-  const slotIndex=collection.findIndex(s=>!s); if(slotIndex===-1){ alert('No empty slot'); return; }
-  money-=cost; updateMoneyUI();
-  collection[slotIndex]={type:el.dataset.type, rarity:el.dataset.rarity, mps:Number(el.dataset.mps)};
-  safeSend({type:'buy', itemId:el.dataset.id});
-  safeSend({type:'update', collection, money});
-  renderCollections(); el.remove();
-}
-
-function startStealBar(thiefId,victimId,slot){
-  const bar=document.createElement('div'); bar.className='steal-bar'; bar.dataset.thief=thiefId; bar.dataset.victim=victimId; bar.dataset.slot=slot; const targetSlot=document.querySelectorAll('.player-block')[0].querySelectorAll('.slot')[slot]; targetSlot.appendChild(bar); activeSteals[`${thiefId}_${victimId}_${slot}`]=bar;
-  let pct=0; const interval=setInterval(()=>{ pct+=2; bar.style.width=pct+'%'; if(pct>=100){ clearInterval(interval); stopStealBar(thiefId,victimId,slot,true); } },80);
-  bar.dataset.interval=interval;
-}
-
-function stopStealBar(thiefId,victimId,slot,success=false){
-  const key=`${thiefId}_${victimId}_${slot}`; const bar=activeSteals[key]; if(!bar) return; clearInterval(bar.dataset.interval);
-  bar.remove(); delete activeSteals[key];
-  if(success && victimId===playerId){ collection[slot]=null; updateMoneyUI(); renderCollections(); }
-}
-
-function keyToObj(key){ const [thief,victim,slot]=key.split('_'); return {thiefId:thief,victimId:victim,slot:Number(slot)}; }
-
-document.addEventListener('keydown', e=>{
-  const arrowKeys=['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'];
-  if(!arrowKeys.includes(e.key)) return;
-  Object.keys(activeSteals).forEach(k=>{
-    const steal=keyToObj(k);
-    if(steal.victimId===playerId){
-      stopStealBar(steal.thiefId, steal.victimId, steal.slot);
-      safeSend({type:'stealBlocked', thiefId:steal.thiefId, victimId:steal.victimId, slot:steal.slot});
-      alert('You blocked a steal!');
-    }
-  });
-});
-
-setInterval(()=>{ money+=collection.reduce((a,b)=>a+(b?b.mps:0),0)/2; updateMoneyUI(); },1000);
 setInterval(spawnWalker,4000);
 
+/* ================= Steal UI ================= */
+function keyToObj(key){ return key?.thiefId+'-'+key?.victimId+'-'+key?.slot; }
+function startStealBar(thiefId,victimId,slot){
+  const id=thiefId+'-'+victimId+'-'+slot; if(activeSteals[id]) return;
+  const bar=document.createElement('div'); bar.className='steal-bar'; road.appendChild(bar);
+  let progress=0; const int=setInterval(()=>{progress+=2; bar.style.width=progress+'%'; if(progress>=100){clearInterval(int); bar.remove(); delete activeSteals[id];}},100);
+  activeSteals[id]={bar,int};
+}
+function stopStealBar({thiefId,victimId,slot}){ const id=thiefId+'-'+victimId+'-'+slot; if(activeSteals[id]){ clearInterval(activeSteals[id].int); activeSteals[id].bar.remove(); delete activeSteals[id]; } }
+
+updateMoneyUI();
+renderCollections();
 </script>
+
 </body>
 </html>
 

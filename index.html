@@ -5,13 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Steal A Spermbob — Multiplayer</title>
 <style>
-:root{
-  --bg:#071018; --panel:#0b1220; --muted:#9aa6b2;
-  --rare-blue: rgba(0,120,255,0.18);
-  --epic-purple: rgba(200,50,255,0.18);
-  --uncommon-green: rgba(0,255,120,0.12);
-  --common-gray: rgba(255,255,255,0.04);
-}
+:root{--bg:#071018;--panel:#0b1220;--muted:#9aa6b2;--rare-blue: rgba(0,120,255,0.18);--epic-purple: rgba(200,50,255,0.18);--uncommon-green: rgba(0,255,120,0.12);--common-gray: rgba(255,255,255,0.04);}
 html,body{height:100%;margin:0;background:linear-gradient(#071018,#001018);font-family:Inter,Arial,sans-serif;color:#e6eef8}
 #topbar{position:fixed;left:0;right:0;top:0;height:54px;display:flex;align-items:center;padding:8px 12px;gap:12px;background:rgba(0,0,0,0.25);z-index:50}
 #money{font-weight:700}
@@ -69,7 +63,7 @@ input,button,textarea{font-family:inherit}
         <button id="createRoom">Host</button>
         <button id="joinRoom">Join</button>
       </div>
-      <div class="small" style="margin-top:8px">Click walkers to buy. Buy removes walker for everyone. Right-click or hold to sell your item.</div>
+      <div class="small" style="margin-top:8px">Click walkers to buy. Hold to sell/steal. Release cancels.</div>
     </div>
 
     <div class="panel">
@@ -103,17 +97,18 @@ input,button,textarea{font-family:inherit}
 <audio id="bgm" src="bgm.mp3" loop></audio>
 
 <script>
-/* CONFIG */
-const WS_URL='wss://spermbob-server.onrender.com';
-const START_MONEY=30;
-const SLOTS=8;
+/* ================= CONFIG ================= */
+const WS_URL = 'wss://spermbob-server.onrender.com';
+const START_MONEY = 30;
+const SLOTS = 8;
+const HOLD_TIME = 2000; // 2s hold for sell/steal
 
-/* STATE */
-let ws=null,playerId=null,username=null,roomCode=null,money=START_MONEY;
-let collection=Array(SLOTS).fill(null),players={},activeSteals={};
+/* ================= STATE ================= */
+let ws=null, playerId=null, username=null, roomCode=null;
+let money=START_MONEY, collection=Array(SLOTS).fill(null), players={}, activeHolds={};
 
-/* Rarity tint filters */
-const rarityFilter={'Common':'drop-shadow(0 0 6px rgba(255,255,255,0.06))','Uncommon':'drop-shadow(0 0 8px rgba(0,255,120,0.12))','Rare':'drop-shadow(0 0 8px rgba(0,120,255,0.16))','Epic':'drop-shadow(0 0 10px rgba(200,50,255,0.18))'};
+/* rarity filters */
+const rarityFilter={ 'Common':'drop-shadow(0 0 6px rgba(255,255,255,0.06))', 'Uncommon':'drop-shadow(0 0 8px rgba(0,255,120,0.12))', 'Rare':'drop-shadow(0 0 8px rgba(0,120,255,0.16))', 'Epic':'drop-shadow(0 0 10px rgba(200,50,255,0.18))' };
 
 /* DOM */
 const moneyVal=document.getElementById('moneyVal');
@@ -133,103 +128,141 @@ const roomCodeField=document.getElementById('roomCode');
 const createRoomBtn=document.getElementById('createRoom');
 const joinRoomBtn=document.getElementById('joinRoom');
 
-document.getElementById('saveBtn').onclick=()=>{localStorage.setItem('spermbob_save',JSON.stringify({money,collection}));alert('Saved locally');};
-document.getElementById('loadBtn').onclick=()=>{const d=JSON.parse(localStorage.getItem('spermbob_save')||'null');if(d){money=d.money||money;collection=d.collection||collection;updateMoneyUI();renderCollections();safeSend({type:'update',collection,money});}};
-document.getElementById('resetBtn').onclick=()=>{if(confirm('Reset save?')){money=START_MONEY;collection=Array(SLOTS).fill(null);updateMoneyUI();renderCollections();safeSend({type:'update',collection,money});}};
-document.getElementById('toggleBgm').onclick=()=>{if(bgm.paused)bgm.play();else bgm.pause();};
+document.getElementById('saveBtn').onclick=()=>{ localStorage.setItem('spermbob_save',JSON.stringify({money,collection})); alert('Saved locally'); };
+document.getElementById('loadBtn').onclick=()=>{ const d=JSON.parse(localStorage.getItem('spermbob_save')||'null'); if(d){ money=d.money||money; collection=d.collection||collection; updateMoneyUI(); renderCollections(); safeSend({type:'update',collection,money}); } };
+document.getElementById('resetBtn').onclick=()=>{ if(confirm('Reset save?')){ money=START_MONEY; collection=Array(SLOTS).fill(null); updateMoneyUI(); renderCollections(); safeSend({type:'update',collection,money}); } };
+document.getElementById('toggleBgm').onclick=()=>{ if(bgm.paused) bgm.play(); else bgm.pause(); };
 
-/* HELPERS */
-function setStatus(s){statusEl.textContent=s;}
-function updateMoneyUI(){moneyVal.textContent=Math.floor(money);}
-function safeSend(obj){try{if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify(obj));}catch(e){console.error('safeSend error',e);}}
+/* ================= HELPERS ================= */
+function setStatus(s){ statusEl.textContent=s; }
+function updateMoneyUI(){ moneyVal.textContent=Math.floor(money); }
+function safeSend(obj){ try{ if(ws&&ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify(obj)); }catch(e){ console.error(e); } }
 
-/* USER JOIN */
+/* ================= USER JOIN ================= */
 enterBtn.addEventListener('click',()=>{
   const n=usernameInput.value.trim();
   const rc=roomInput.value.trim()||Math.random().toString(36).slice(2,6);
   if(!n)return alert('Pick a username');
-  username=n;roomCode=rc;
-  usernameScreen.style.display='none';roomCodeField.value=roomCode;roomLabel.textContent=roomCode;
+  username=n; roomCode=rc;
+  usernameScreen.style.display='none';
+  roomCodeField.value=roomCode;
+  roomLabel.textContent=roomCode;
   bgm.play().catch(()=>{});
   connectWS();
 });
 usernameInput.addEventListener('keydown',e=>{if(e.key==='Enter')enterBtn.click();});
 roomInput.addEventListener('keydown',e=>{if(e.key==='Enter')enterBtn.click();});
-createRoomBtn.addEventListener('click',()=>{const c=Math.random().toString(36).slice(2,6);roomCodeField.value=c;roomInput.value=c;roomCode=c;roomLabel.textContent=c;});
-joinRoomBtn.addEventListener('click',()=>{const c=roomCodeField.value.trim();if(!c)return alert('enter room code');roomInput.value=c;roomCode=c;if(ws&&ws.readyState===WebSocket.OPEN)safeSend({type:'joinRoom',username,roomCode});else{usernameScreen.style.display='none';connectWS();}});
+createRoomBtn.addEventListener('click',()=>{ const c=Math.random().toString(36).slice(2,6); roomCodeField.value=c; roomInput.value=c; roomCode=c; roomLabel.textContent=c;});
+joinRoomBtn.addEventListener('click',()=>{ const c=roomCodeField.value.trim(); if(!c)return alert('enter room code'); roomInput.value=c; roomCode=c; if(ws&&ws.readyState===WebSocket.OPEN)safeSend({type:'joinRoom',username,roomCode:c}); else{usernameScreen.style.display='none'; connectWS();}});
 
-/* WEBSOCKET */
+/* ================= WEBSOCKET ================= */
 let reconnectTimer=null;
 function connectWS(){
   if(ws&&(ws.readyState===WebSocket.OPEN||ws.readyState===WebSocket.CONNECTING))return;
   setStatus('Connecting...');
-  try{ws=new WebSocket(WS_URL);}catch(err){console.error('WebSocket constructor failed',err);setStatus('Connection failed');return;}
-  ws.addEventListener('open',()=>{setStatus('Connected');safeSend({type:'joinRoom',username,roomCode});safeSend({type:'update',collection,money});});
-  ws.addEventListener('message',ev=>{let data;try{data=JSON.parse(ev.data);}catch(e){return;}handleMessage(data);});
-  ws.addEventListener('close',()=>{setStatus('Disconnected — reconnecting...');Object.keys(activeSteals).forEach(k=>stopStealUI(keyToObj(k)));activeSteals={};clearTimeout(reconnectTimer);reconnectTimer=setTimeout(()=>connectWS(),2000);});
-  ws.addEventListener('error',err=>{console.error('WebSocket error',err);setStatus('Connection error');});
+  try{ ws=new WebSocket(WS_URL); }catch(e){ setStatus('Failed'); return; }
+
+  ws.addEventListener('open',()=>{ setStatus('Connected'); safeSend({type:'joinRoom',username,roomCode}); safeSend({type:'update',collection,money}); });
+  ws.addEventListener('message',ev=>{ let data; try{data=JSON.parse(ev.data);}catch(e){return;} handleMessage(data); });
+  ws.addEventListener('close',()=>{ setStatus('Disconnected — reconnecting...'); Object.keys(activeHolds).forEach(k=>stopHoldUI(k)); activeHolds={}; clearTimeout(reconnectTimer); reconnectTimer=setTimeout(connectWS,2000); });
+  ws.addEventListener('error',err=>{ console.error(err); setStatus('Connection error'); });
 }
 
-/* MESSAGE HANDLER */
+/* ================= MESSAGE HANDLER ================= */
 function handleMessage(msg){
-  if(msg.type==='roomUpdate'){players=msg.players||{};if(msg.you)playerId=msg.you;if(playerId&&players[playerId]&&!collection.some(Boolean)){collection=players[playerId].collection.slice();money=players[playerId].money??money;updateMoneyUI();}renderCollections();renderPlayerList();return;}
-  if(msg.type==='buy'&&msg.itemId){document.querySelectorAll('.walker').forEach(w=>{if(w.dataset.id===msg.itemId)w.remove();});return;}
-  if(msg.type==='stealStart'){startStealBar(msg.thiefId,msg.victimId,msg.slot);if(msg.victimId===playerId)alert(`Someone is stealing your slot ${msg.slot}! Press any arrow key to block.`);return;}
-  if(msg.type==='stealProgress'){updateStealProgress(msg.thiefId,msg.victimId,msg.slot,msg.progress);return;}
-  if(msg.type==='stealBlocked'){stopStealBar(msg.thiefId,msg.victimId,msg.slot);if(msg.victimId===playerId)alert('You blocked a steal!');return;}
-  if(msg.type==='stealSuccess'){stopStealBar(msg.thiefId,msg.victimId,msg.slot);if(msg.victimId===playerId)alert('One of your items was stolen!');if(msg.thiefId===playerId)alert('You stole an item!');return;}
+  if(msg.type==='roomUpdate'){ players=msg.players; if(msg.you)playerId=msg.you; if(playerId&&players[playerId]&&!collection.some(Boolean)){ collection=players[playerId].collection.slice(); money=players[playerId].money||money; updateMoneyUI(); } renderCollections(); renderPlayerList(); return; }
+  if(msg.type==='buy'||msg.type==='stealSuccess'||msg.type==='update'){ renderCollections(); return; }
 }
 
-/* UI RENDER */
+/* ================= UI RENDER ================= */
 function renderPlayerList(){
-  playerNamesEl.innerHTML='';const ids=Object.keys(players);if(ids.length===0)playerNamesEl.textContent='—';
-  ids.forEach(id=>{const d=document.createElement('div');d.textContent=players[id].username||'player';playerNamesEl.appendChild(d);});
+  playerNamesEl.innerHTML=''; const ids=Object.keys(players); if(ids.length===0)playerNamesEl.textContent='—';
+  ids.forEach(id=>{ const d=document.createElement('div'); d.textContent=players[id].username; playerNamesEl.appendChild(d); });
 }
+
 function renderCollections(){
-  collectionsArea.innerHTML='';const ids=Object.keys(players);const sorted=[];if(playerId&&players[playerId])sorted.push(playerId);ids.forEach(id=>{if(id!==playerId)sorted.push(id);});
-  sorted.forEach(id=>{const p=players[id];const block=document.createElement('div');block.className='player-block';const title=document.createElement('div');title.className='player-name';title.textContent=p?.username||'player';block.appendChild(title);
-  const slots=document.createElement('div');slots.className='slots';const arr=(p&&p.collection)?p.collection:Array(SLOTS).fill(null);
-  for(let i=0;i<SLOTS;i++){const slot=document.createElement('div');slot.className='slot';if(arr[i]){const it=arr[i];const img=document.createElement('img');img.src=(it.type==='bellbob')?'bellbob.png':'spermbob.png';img.style.filter=rarityFilter[it.rarity]||'';slot.appendChild(img);const meta=document.createElement('div');meta.className='meta';meta.textContent=`${it.rarity} | $${it.mps}/s`;slot.appendChild(meta);
-  if(id===playerId){let hold=null;slot.addEventListener('mousedown',e=>{if(e.button!==0)return;hold=setTimeout(()=>{const refund=Math.max(1,Math.floor(it.mps*5));money+=refund;updateMoneyUI();collection[i]=null;safeSend({type:'update',collection,money});renderCollections();},5000);});slot.addEventListener('mouseup',()=>{clearTimeout(hold);});slot.addEventListener('mouseleave',()=>{clearTimeout(hold);});slot.addEventListener('contextmenu',e=>{e.preventDefault();const refund=Math.max(1,Math.floor(it.mps*5));money+=refund;updateMoneyUI();collection[i]=null;safeSend({type:'update',collection,money});renderCollections();});}else{slot.addEventListener('click',()=>{safeSend({type:'stealStart',victimId:id,slot:i,thiefId:playerId});});}}else{slot.style.opacity=0.6;}slots.appendChild(slot);}block.appendChild(slots);collectionsArea.appendChild(block);});
+  collectionsArea.innerHTML='';
+  const ids=Object.keys(players);
+  ids.forEach(id=>{
+    const p=players[id]; const block=document.createElement('div'); block.className='player-block';
+    const title=document.createElement('div'); title.className='player-name'; title.textContent=p.username; block.appendChild(title);
+    const slots=document.createElement('div'); slots.className='slots';
+    const arr=p.collection||Array(SLOTS).fill(null);
+    for(let i=0;i<SLOTS;i++){
+      const slot=document.createElement('div'); slot.className='slot';
+      if(arr[i]){
+        const it=arr[i]; const img=document.createElement('img'); img.src=(it.type==='bellbob')?'bellbob.png':'spermbob.png'; img.style.filter=rarityFilter[it.rarity]||''; slot.appendChild(img);
+        const meta=document.createElement('div'); meta.className='meta'; meta.textContent=`${it.rarity} | $${it.mps}/s`; slot.appendChild(meta);
+        if(id===playerId){
+          slot.addEventListener('mousedown',e=>{ if(e.button!==0)return; startHold(slot,'sell',i); });
+          slot.addEventListener('mouseup',()=>stopHoldUI(slot.dataset.key));
+          slot.addEventListener('mouseleave',()=>stopHoldUI(slot.dataset.key));
+        }else{
+          slot.addEventListener('mousedown',e=>{ if(e.button!==0)return; startHold(slot,'steal',i,id); });
+          slot.addEventListener('mouseup',()=>stopHoldUI(slot.dataset.key));
+          slot.addEventListener('mouseleave',()=>stopHoldUI(slot.dataset.key));
+        }
+      }else slot.style.opacity=0.6;
+      slot.dataset.key=id+'-'+i;
+      slots.appendChild(slot);
+    }
+    block.appendChild(slots); collectionsArea.appendChild(block);
+  });
 }
 
-/* Walkers & Buying */
-function spawnWalker(){const rarities=[{name:'Common',cost:10,mps:1},{name:'Uncommon',cost:25,mps:3},{name:'Rare',cost:60,mps:7},{name:'Epic',cost:150,mps:15}];const types=['spermbob','bellbob'];const type=types[Math.floor(Math.random()*types.length)];const rar=rarities[Math.floor(Math.random()*rarities.length)];const el=document.createElement('div');el.className='walker';el.dataset.id=Math.random().toString(36).slice(2,9);el.dataset.type=type;el.dataset.rarity=rar.name;el.dataset.cost=rar.cost;el.dataset.mps=rar.mps;el.style.left='-60px';el.style.top=(16+Math.random()*96)+'px';const img=document.createElement('img');img.src=(type==='bellbob')?'bellbob.png':'spermbob.png';img.style.filter=(rar.name&&rarityFilter[rar.name])||'';el.appendChild(img);const tag=document.createElement('div');tag.className='tag';tag.textContent=`${rar.name} • $${rar.cost} • $${rar.mps}/s`;el.appendChild(tag);el.addEventListener('click',()=>attemptBuy(el));road.appendChild(el);let x=-80;const speed=0.5+Math.random()*1.2;function step(){x+=speed;el.style.left=x+'px';if(x>window.innerWidth+80)el.remove();else requestAnimationFrame(step);}step();}
-function attemptBuy(el){const cost=Number(el.dataset.cost);if(money<cost)return alert('Not enough money');money-=cost;updateMoneyUI();for(let i=0;i<SLOTS;i++){if(!collection[i]){collection[i]={type:el.dataset.type,rarity:el.dataset.rarity,mps:Number(el.dataset.mps)};safeSend({type:'update',collection,money});renderCollections();el.remove();break;}}}
-
-/* AUTO SPAWN WALKERS */
-setInterval(spawnWalker,5000);
-
-/* STEAL SYSTEM */
-function objToKey(victimId,slot){return `${victimId}_${slot}`;}
-function keyToObj(key){const [victimId,slot]=key.split('_');return {victimId,slot:Number(slot)};}
-function startStealBar(thiefId,victimId,slot,progress=0){
-  const key=objToKey(victimId,slot);if(activeSteals[key])return;
-  activeSteals[key]={progress,interval:null,thiefId,victimId,slot};
-  const idx=getPlayerIndex(victimId);if(idx===-1)return;
-  const block=document.querySelectorAll('.player-block')[idx];if(!block)return;
-  const slotEl=block.querySelectorAll('.slot')[slot];if(!slotEl)return;
-  let bar=slotEl.querySelector('.steal-bar');if(!bar){bar=document.createElement('div');bar.className='steal-bar';slotEl.appendChild(bar);}
-  bar.style.width=(progress*100/15)+'%';
-  activeSteals[key].interval=setInterval(()=>{
-    const entry=activeSteals[key];if(!entry)return;entry.progress+=1;
-    const bar2=document.querySelectorAll('.player-block')[idx]?.querySelectorAll('.slot')[slot]?.querySelector('.steal-bar');
-    if(bar2)bar2.style.width=(entry.progress*100/15)+'%';
-    safeSend({type:'stealProgress',thiefId,victimId,slot,progress:entry.progress});
-    if(entry.progress>=15){clearInterval(entry.interval);safeSend({type:'stealSuccess',victimId,slot,thiefId});delete activeSteals[key];renderCollections();}
-  },1000);
+/* ================= HOLD MECHANIC ================= */
+function startHold(slot,type,index,targetId){
+  if(activeHolds[slot.dataset.key]) return;
+  const bar=document.createElement('div'); bar.className='steal-bar'; slot.appendChild(bar);
+  let start=null;
+  const step=ts=>{
+    if(!start)start=ts;
+    const pct=Math.min((ts-start)/HOLD_TIME*100,100); bar.style.width=pct+'%';
+    if(pct>=100){
+      if(type==='sell'){ money+=Math.max(1,Math.floor(collection[index].mps*5)); collection[index]=null; updateMoneyUI(); safeSend({type:'update',collection,money}); }
+      if(type==='steal'){ safeSend({type:'stealStart',victimId:targetId,slot:index}); }
+      stopHoldUI(slot.dataset.key);
+      return;
+    }
+    activeHolds[slot.dataset.key].raf=requestAnimationFrame(step);
+  };
+  activeHolds[slot.dataset.key]={raf:requestAnimationFrame(step),bar};
 }
-function updateStealProgress(thiefId,victimId,slot,progress){
-  const key=objToKey(victimId,slot);
-  if(!activeSteals[key]){startStealBar(thiefId,victimId,slot,progress);return;}
-  activeSteals[key].progress=progress;
-  const idx=getPlayerIndex(victimId);if(idx!==-1){const bar=document.querySelectorAll('.player-block')[idx]?.querySelectorAll('.slot')[slot]?.querySelector('.steal-bar');if(bar)bar.style.width=(progress*100/15)+'%';}
+
+function stopHoldUI(key){
+  if(activeHolds[key]){ cancelAnimationFrame(activeHolds[key].raf); if(activeHolds[key].bar) activeHolds[key].bar.remove(); delete activeHolds[key]; }
 }
-function stopStealBar(thiefId,victimId,slot){const key=objToKey(victimId,slot);const entry=activeSteals[key];if(!entry)return;clearInterval(entry.interval);const idx=getPlayerIndex(victimId);if(idx!==-1){const bar=document.querySelectorAll('.player-block')[idx]?.querySelectorAll('.slot')[slot]?.querySelector('.steal-bar');if(bar)bar.style.width='0%';}delete activeSteals[key];}
-function getPlayerIndex(id){const arr=document.querySelectorAll('.player-block');for(let i=0;i<arr.length;i++)if((players[id]?.username||'player')===arr[i].querySelector('.player-name').textContent)return i;return -1;}
-document.addEventListener('keydown',e=>{if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){Object.keys(activeSteals).forEach(k=>{const entry=activeSteals[k];if(entry && entry.victimId===playerId){safeSend({type:'stealBlocked',victimId:entry.victimId,slot:entry.slot});stopStealBar(entry.thiefId,entry.victimId,entry.slot);}});}});
+
+/* ================= Walkers ================= */
+function spawnWalker(){
+  const rarities=[{name:'Common',cost:10,mps:1},{name:'Uncommon',cost:25,mps:3},{name:'Rare',cost:60,mps:7},{name:'Epic',cost:150,mps:15}];
+  const types=['spermbob','bellbob']; const type=types[Math.floor(Math.random()*types.length)];
+  const rar=rarities[Math.floor(Math.random()*rarities.length)];
+  const el=document.createElement('div'); el.className='walker'; el.dataset.id=Math.random().toString(36).slice(2,9); el.dataset.type=type; el.dataset.rarity=rar.name; el.dataset.cost=rar.cost; el.dataset.mps=rar.mps; el.style.left='-60px'; el.style.top=(16+Math.random()*96)+'px';
+  const img=document.createElement('img'); img.src=(type==='bellbob')?'bellbob.png':'spermbob.png'; img.style.filter=rarityFilter[rar.name]||''; el.appendChild(img);
+  const tag=document.createElement('div'); tag.className='tag'; tag.textContent=`${rar.name} • $${rar.cost} • $${rar.mps}/s`; el.appendChild(tag); 
+  el.addEventListener('click',()=>attemptBuy(el));
+  road.appendChild(el);
+  let x=-80; const speed=0.5+Math.random()*1.2;
+  function step(){ x+=speed; el.style.left=x+'px'; if(x>window.innerWidth+80) el.remove(); else requestAnimationFrame(step); } step();
+}
+
+function attemptBuy(el){
+  const cost=Number(el.dataset.cost);
+  if(money<cost){ alert('Not enough money'); return; }
+  const freeIndex=collection.findIndex(Boolean===false); 
+  if(freeIndex<0){ alert('No free slot'); return; }
+  money-=cost; updateMoneyUI();
+  collection[freeIndex]={type:el.dataset.type,rarity:el.dataset.rarity,mps:Number(el.dataset.mps)};
+  safeSend({type:'update',collection,money});
+  renderCollections();
+  el.remove();
+}
+
+/* ================= MONEY TICK ================= */
+setInterval(()=>{ money+=collection.reduce((a,b)=>b?a+b.mps:a,0); updateMoneyUI(); safeSend({type:'update',money,collection}); },1000);
+
 </script>
-
 </body>
 </html>
 

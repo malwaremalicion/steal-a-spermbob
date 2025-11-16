@@ -5,22 +5,22 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Steal A Spermbob</title>
 <style>
- body { background:#222; color:#fff; font-family:Arial; overflow:hidden; }
- #road { position:absolute; left:0; top:50%; width:100%; height:120px; background:#444; }
- .walker { position:absolute; top:20px; width:48px; height:48px; cursor:pointer; }
- .label { position:absolute; top:-20px; width:100%; text-align:center; font-size:12px; color:white; text-shadow:0 0 4px black; }
- #collection { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; gap:10px; }
- .slot { width:80px; height:80px; background:#333; border:2px solid #555; position:relative; }
- .slot img { width:100%; height:100%; pointer-events:none; }
- #money { position:absolute; left:10px; top:10px; font-size:22px; }
- #saveLoad { position:absolute; right:10px; top:10px; }
- #mpBox { position:absolute; right:10px; bottom:10px; width:220px; background:#111; padding:10px; border:1px solid #555; }
- #mpStatus { font-size:12px; margin-bottom:5px; }
- textarea { width:100%; height:60px; background:#000; color:#0f0; font-size:10px; }
- #stealWarn { position:absolute; top:40%; left:50%; transform:translate(-50%,-50%); background:red; padding:20px; font-size:20px; display:none; }
- #usernameScreen { position:fixed; inset:0; background:#000a; display:flex; flex-direction:column; justify-content:center; align-items:center; z-index:9999; }
- #usernameScreen div { background:#222; padding:20px; border-radius:12px; text-align:center; color:white; width:260px; }
- #playerList { position:fixed; top:10px; left:10px; background:#222a; padding:10px; border-radius:8px; color:white; font-size:14px; min-width:140px; }
+body { background:#222; color:#fff; font-family:Arial; overflow:hidden; margin:0; }
+#road { position:absolute; left:0; top:50%; width:100%; height:120px; background:#444; }
+.walker { position:absolute; top:20px; width:48px; height:48px; cursor:pointer; }
+.label { position:absolute; top:-20px; width:100%; text-align:center; font-size:12px; color:white; text-shadow:0 0 4px black; }
+#collection { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; gap:10px; }
+.slot { width:80px; height:80px; background:#333; border:2px solid #555; position:relative; cursor:pointer; }
+.slot img { width:100%; height:100%; pointer-events:none; }
+#money { position:absolute; left:10px; top:10px; font-size:22px; }
+#saveLoad { position:absolute; right:10px; top:10px; }
+#mpBox { position:absolute; right:10px; bottom:10px; width:220px; background:#111; padding:10px; border:1px solid #555; }
+#mpStatus { font-size:12px; margin-bottom:5px; }
+textarea { width:100%; height:60px; background:#000; color:#0f0; font-size:10px; }
+#stealWarn { position:absolute; top:40%; left:50%; transform:translate(-50%,-50%); background:red; padding:20px; font-size:20px; display:none; z-index:999; }
+#usernameScreen { position:fixed; inset:0; background:#000a; display:flex; flex-direction:column; justify-content:center; align-items:center; z-index:9999; }
+#usernameScreen div { background:#222; padding:20px; border-radius:12px; text-align:center; color:white; width:260px; }
+#playerList { position:fixed; top:10px; left:10px; background:#222a; padding:10px; border-radius:8px; color:white; font-size:14px; min-width:140px; }
 </style>
 </head>
 <body>
@@ -51,6 +51,10 @@
  <b>Players:</b>
  <div id="playerNames"></div>
 </div>
+
+<!-- Background Music -->
+<audio id="bgm" src="bgm.mp3" loop></audio>
+
 <script>
 // --- Username System ---
 let username = localStorage.getItem('spermbob_username') || null;
@@ -64,6 +68,10 @@ usernameSubmit.onclick = () => {
   localStorage.setItem('spermbob_username', username);
   usernameScreen.style.display='none';
   broadcastPlayerList();
+
+  // Play background music
+  const bgm = document.getElementById('bgm');
+  bgm.play().catch(()=>console.log("BGM autoplay blocked, will play on next interaction."));
 };
 usernameInput.addEventListener('keydown', e=>{ if(e.key==='Enter') usernameSubmit.onclick(); });
 if(username) usernameScreen.style.display='none';
@@ -75,8 +83,8 @@ function updatePlayerListUI(){
   playerNamesDiv.innerHTML = Object.values(players).map(p=>`<div>${p}</div>`).join('');
 }
 function broadcastPlayerList(){
-  if(!username) return;
-  if(typeof myPeerId !== 'undefined') players[myPeerId] = username;
+  if(!username || !myPeerId) return;
+  players[myPeerId] = username;
   sendToAll({ type:'playerList', players });
   updatePlayerListUI();
 }
@@ -120,6 +128,7 @@ function spawnWalker(){
  div.dataset.rarity=rarity.name;
  div.dataset.cost=rarity.cost;
  div.dataset.mps=rarity.mps;
+ div.dataset.id=Math.random().toString(36).substr(2,9);
  let img=document.createElement("img");
  img.src = t=="spermbob"?"spermbob.png":"bellbob.png";
  img.style.filter = `drop-shadow(0 0 5px ${rarity.tint})`;
@@ -133,7 +142,7 @@ function spawnWalker(){
  let speed=0.5+Math.random()*0.5;
  function move(){ x+=speed; div.style.left=x+"px"; if(x>window.innerWidth+100){ div.remove(); } else requestAnimationFrame(move); }
  move();
- if(dc) send({type:"spawn", t, rarity:rarity.name});
+ if(dc) sendToAll({type:"spawn", id:div.dataset.id, t, rarity:rarity.name});
 }
 setInterval(spawnWalker,2000);
 
@@ -147,9 +156,9 @@ function buy(w){
  let item={ type:w.dataset.type, rarity:w.dataset.rarity, mps:Number(w.dataset.mps) };
  collection[slot]=item;
  renderCollection();
- if(dc) send({type:"buy", slot, item});
+ if(dc) sendToAll({type:"buy", slot, item});
+ if(dc) sendToAll({type:"despawn", id:w.dataset.id});
  w.remove();
- if(dc) send({type:"despawn", id:w.id});
 }
 
 function renderCollection(){
@@ -170,18 +179,103 @@ function renderCollection(){
 
 setInterval(()=>{ for(let it of collection){ if(it) money+=it.mps; } document.getElementById("money").innerText="$"+money; },1000);
 
-function holdSell(i){ let t=setTimeout(()=>{ if(collection[i]){ collection[i]=null; renderCollection(); if(dc) send({type:"sell", slot:i}); } },5000); document.onmouseup=()=>clearTimeout(t); }
+function holdSell(i){ 
+  let t=setTimeout(()=>{ 
+    if(collection[i]){
+      collection[i]=null; renderCollection(); 
+      if(dc) sendToAll({type:"sell", slot:i});
+    } 
+  },5000); 
+  document.onmouseup=()=>clearTimeout(t); 
+}
 
 document.getElementById("saveBtn").onclick=()=>localStorage.setItem("spermSave",JSON.stringify({money,collection}));
-document.getElementById("loadBtn").onclick=()=>{ let d=JSON.parse(localStorage.getItem("spermSave")||"{}"); if(d.collection){money=d.money;collection=d.collection;renderCollection();} };
+document.getElementById("loadBtn").onclick=()=>{
+ let d=JSON.parse(localStorage.getItem("spermSave")||"{}"); 
+ if(d.collection){money=d.money;collection=d.collection;renderCollection();}
+}
 
-document.getElementById("bgm")?.play();
+// --- Multiplayer P2P ---
+let pc=null, dc=null, myPeerId=Math.random().toString(36).substr(2,9);
 
-// --- Multiplayer simplified ---
-let pc=null, dc=null;
 function sendToAll(o){ if(dc&&dc.readyState==="open") dc.send(JSON.stringify(o)); }
-function handleMessage(peerId, data){ if(data.type==='playerList'){ players=data.players; updatePlayerListUI(); return; } /* handle other messages */ }
-function onPeerConnected(peerId){ broadcastPlayerList(); /* other peer setup */ }
+function handleData(peerId, data){
+    if(data.type=="playerList"){ players=data.players; updatePlayerListUI(); return; }
+    if(data.type=="spawn"){ spawnRemoteWalker(data); return; }
+    if(data.type=="buy"){ collection[data.slot]=data.item; renderCollection(); return; }
+    if(data.type=="sell"){ collection[data.slot]=null; renderCollection(); return; }
+    if(data.type=="despawn"){ let e=document.querySelector(`[data-id='${data.id}']`); if(e) e.remove(); return; }
+    if(data.type=="stealAttempt" && data.victimId===myPeerId){ showStealWarning(collection[data.slot]); activeSteals[data.slot]=data.thiefId; }
+    if(data.type=="stealSuccess" && data.to===myPeerId){ collection[data.slot]=collection[data.slot]; renderCollection(); }
+    if(data.type=="stealBlocked" && data.slot===stealTarget?.slot){ stealWarn.style.display='none'; clearInterval(stealTimeout); }
+}
+
+function spawnRemoteWalker(d){}
+
+// --- Steal Feature ---
+let stealTarget = null;
+let stealTimeout = null;
+let stealProgress = 0;
+let activeSteals = {};
+function attemptSteal(slot, victimId){
+    if(!collection[slot]) return;
+    stealTarget = {slot, victimId};
+    stealProgress = 0;
+    stealTimeout = setInterval(()=>{
+        stealProgress++;
+        if(stealProgress >= 15){
+            if(dc) sendToAll({type:"stealSuccess", slot, from:victimId, to:myPeerId});
+            clearInterval(stealTimeout);
+        }
+    }, 1000);
+}
+function showStealWarning(item){
+    stealWarn.innerText = `SOMEONE IS STEALING YOUR ${item.type.toUpperCase()}`;
+    stealWarn.style.display = 'block';
+}
+let defenseKeys = [];
+document.addEventListener('keydown', e=>{
+    if(stealWarn.style.display==='block' && ['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
+        defenseKeys.push(e.key);
+        if(defenseKeys.length >= 4){
+            stealWarn.style.display='none';
+            defenseKeys = [];
+            if(dc) sendToAll({type:'stealBlocked', slot:stealTarget.slot});
+            clearInterval(stealTimeout);
+        }
+    }
+});
+coll.querySelectorAll('.slot').forEach((slotEl,i)=>{
+    slotEl.onmousedown = e => {
+        if(e.ctrlKey && Object.keys(players).length>1){
+            let targetPlayerId = Object.keys(players).find(id=>id!==myPeerId);
+            if(!targetPlayerId) return;
+            if(dc) sendToAll({type:'stealAttempt', slot:i, victimId:targetPlayerId, thiefId:myPeerId});
+            attemptSteal(i, targetPlayerId);
+        }
+    }
+});
+
+// --- Host / Join ---
+document.getElementById("hostBtn").onclick=()=>{
+  pc=new RTCPeerConnection();
+  dc=pc.createDataChannel("c");
+  dc.onopen=()=>{ mpStatus.innerText="Connected"; broadcastPlayerList(); };
+  dc.onmessage=e=>handleData(null, JSON.parse(e.data));
+  pc.onicecandidate=e=>{ document.getElementById("signalData").value=JSON.stringify(pc.localDescription); };
+  pc.createOffer().then(o=>pc.setLocalDescription(o));
+  mpStatus.innerText="Hosting";
+};
+document.getElementById("joinBtn").onclick=()=>{
+  pc=new RTCPeerConnection();
+  pc.ondatachannel=e=>{ dc=e.channel; dc.onopen=()=>{ mpStatus.innerText="Connected"; broadcastPlayerList(); }; dc.onmessage=e=>handleData(null, JSON.parse(e.data)); };
+  pc.onicecandidate=e=>{ document.getElementById("signalData").value=JSON.stringify(pc.localDescription); };
+  let remote=JSON.parse(document.getElementById("signalData").value);
+  pc.setRemoteDescription(remote).then(()=>pc.createAnswer().then(a=>pc.setLocalDescription(a)));
+  mpStatus.innerText="Joining";
+};
+document.getElementById("copySig").onclick=()=>navigator.clipboard.writeText(document.getElementById("signalData").value);
+document.getElementById("applySig").onclick=()=>{ let r=JSON.parse(document.getElementById("signalData").value); pc.setRemoteDescription(r); }
 </script>
 </body>
 </html>

@@ -54,6 +54,12 @@
       <strong>Your and Others' Collections</strong>
       <div id="collectionsArea" class="collectionsRow"></div>
     </div>
+    <div style="margin-top:8px" class="panel">
+      <button id="saveBtn">Save</button>
+      <button id="loadBtn">Load</button>
+      <button id="resetBtn">Reset</button>
+      <span style="margin-left:12px;color:var(--muted)">Hold left click to sell (5s). Click other slot to start steal (15s). Use arrow keys to block steals.</span>
+    </div>
   </div>
 </div>
 
@@ -65,7 +71,7 @@
       <input id="roomInput" placeholder="room code (pick any)" style="flex:1;padding:8px;border-radius:8px;border:0;background:#08131a;color:#e6eef8">
       <button id="enterBtn">Enter</button>
     </div>
-    <div style="margin-top:10px;color:var(--muted)">Music will start after you join.</div>
+    <div style="margin-top:10px;color:var(--muted)">Music will start after you join. Saved data will sync when you load.</div>
   </div>
 </div>
 
@@ -86,6 +92,7 @@ let username = null;
 let roomCode = null;
 let players = {};          // server snapshot
 let localWalkers = {};     // id -> { walker, el, spawnTime }
+let activeStealsUI = {};   // key victim_slot -> { bar, interval }
 
 /* DOM */
 const moneyVal = document.getElementById('moneyVal');
@@ -122,20 +129,40 @@ document.getElementById('joinBtn').addEventListener('click', ()=>{
   if (!c) return alert('enter room code');
   roomCode = c;
   roomLabel.textContent = roomCode;
-  // if already connected, request join; else modal will handle initial connect
   if (ws && ws.readyState === WebSocket.OPEN) {
-    safeSend({ type:'joinRoom', roomCode, username });
+    safeSend({ type:'joinRoom', roomCode, username, money:30 });
   } else {
     usernameModal.style.display = 'none';
     connectWS();
   }
 });
 
+/* Save/load/reset */
+document.getElementById('saveBtn').addEventListener('click', ()=>{
+  if (!myId || !players[myId]) return alert('No player loaded to save');
+  const data = { money: players[myId].money, collection: players[myId].collection };
+  localStorage.setItem('spermbob_save', JSON.stringify(data));
+  alert('Saved locally');
+});
+
+document.getElementById('loadBtn').addEventListener('click', ()=>{
+  const d = JSON.parse(localStorage.getItem('spermbob_save')||'null');
+  if (!d) return alert('No save found');
+  // apply locally and send update to server (server authoritative will resolve)
+  if (!myId) return alert('Not in room yet');
+  safeSend({ type:'update', collection: d.collection, money: d.money });
+  alert('Loaded and synced');
+});
+
+document.getElementById('resetBtn').addEventListener('click', ()=>{
+  if (!confirm('Reset save?')) return;
+  localStorage.removeItem('spermbob_save');
+  if (myId) safeSend({ type:'update', collection: Array(COLLECTION_SLOTS).fill(null), money: 30 });
+});
+
 /* WS helpers */
 function setStatus(s){ statusEl.textContent = s; }
-function safeSend(obj){
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
-}
+function safeSend(obj){ if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); else console.warn('safeSend blocked (socket not open)', obj); }
 
 /* Connect */
 let reconnectTimer = null;
@@ -147,365 +174,92 @@ function connectWS(){
     setStatus('Connected');
     safeSend({ type:'joinRoom', roomCode, username, money:30 });
   });
-  ws.addEventListener('message', ev => {
-    let msg;
-    try { msg = JSON.parse(ev.data); } catch(e) { return; }
-    handleServer(msg);
-  });
-  ws.addEventListener('close', ()=> {
-    setStatus('Disconnected — reconnecting...');
-    // clear local walkers
-    Object.values(localWalkers).forEach(e => e.el.remove());
-    localWalkers = {};
-    clearTimeout(reconnectTimer);
-    reconnectTimer = setTimeout(connectWS, 2000);
-  });
+  ws.addEventListener('message', ev => { let msg; try { msg = JSON.parse(ev.data); } catch(e){ return; } handleServer(msg); });
+  ws.addEventListener('close', ()=> { setStatus('Disconnected — reconnecting...'); Object.values(localWalkers).forEach(e=>e.el.remove()); localWalkers={}; clearTimeout(reconnectTimer); reconnectTimer=setTimeout(connectWS,2000); });
   ws.addEventListener('error', ()=> setStatus('Connection error'));
 }
 
 /* Handle server messages */
 function handleServer(msg){
-  if (msg.type === 'roomUpdate') {
+  if (msg.type === 'roomUpdate'){
     players = msg.players || {};
-    // server gives you id in `you`
-    if (msg.you) myId = msg.you;
-    // update money UI if server has authoritative copy
+    if (msg.you) myId = msg.you; // server may send who "you" are
     if (myId && players[myId]) moneyVal.textContent = Math.floor(players[myId].money || 30);
-    // reconcile walkers snapshot: server sends full walkers array
-    if (Array.isArray(msg.walkers)) {
+    if (Array.isArray(msg.walkers)){
       const serverIds = new Set(msg.walkers.map(w=>w.id));
-      // add missing
-      msg.walkers.forEach(w => { if (!localWalkers[w.id]) spawnLocalWalker(w); });
-      // remove locals that server no longer has
-      Object.keys(localWalkers).forEach(id => { if (!serverIds.has(id)) removeLocalWalker(id); });
+      msg.walkers.forEach(w=>{ if (!localWalkers[w.id]) spawnLocalWalker(w); });
+      Object.keys(localWalkers).forEach(id=>{ if (!serverIds.has(id)) removeLocalWalker(id); });
     }
-    renderCollections();
-    renderPlayerList();
+    renderCollections(); renderPlayerList();
     return;
   }
-
-  if (msg.type === 'walkerSpawn' && msg.walker) {
-    spawnLocalWalker(msg.walker);
+  if (msg.type === 'walkerSpawn' && msg.walker){ spawnLocalWalker(msg.walker); return; }
+  if (msg.type === 'walkerRemove' && msg.id){ removeLocalWalker(msg.id); return; }
+  if (msg.type === 'buyResult'){
+    if (!msg.success) alert('Buy failed: ' + (msg.reason||'unknown'));
+    else console.log('Buy OK slot', msg.slot);
     return;
   }
-
-  if (msg.type === 'walkerRemove' && msg.id) {
-    removeLocalWalker(msg.id);
-    return;
-  }
-
-  if (msg.type === 'buyResult') {
-    if (!msg.success) {
-      alert('Buy failed: ' + (msg.reason || 'unknown'));
-    } else {
-      // server will broadcast roomUpdate with authoritative collection & money soon
-      // we can optionally overlay small success feedback (left as console)
-      console.log('Buy success slot', msg.slot);
-    }
-    return;
-  }
-
-  if (msg.type === 'stealStart') {
+  if (msg.type === 'stealStart'){
     startStealUI(msg.thiefId, msg.victimId, msg.slot);
     if (msg.victimId === myId) alert(`SOMEONE IS STEALING YOUR SLOT ${msg.slot} — press arrow keys to block`);
     return;
   }
-  if (msg.type === 'stealBlocked' || msg.type === 'stealSuccess') {
-    stopStealUI(msg.victimId, msg.slot);
-    // roomUpdate will update collections; we call render to be safe
-    renderCollections();
-    return;
+  if (msg.type === 'stealBlocked' || msg.type === 'stealSuccess'){
+    stopStealUI(msg.victimId, msg.slot); renderCollections(); return;
   }
 }
 
 /* Local walker spawn/render */
-function spawnLocalWalker(w) {
+function spawnLocalWalker(w){
   if (localWalkers[w.id]) return;
-  const el = document.createElement('div');
-  el.className = 'walker';
-  el.dataset.id = w.id;
-
-  const img = document.createElement('img');
-  img.src = w.type === 'bellbob' ? 'bellbob.png' : 'spermbob.png';
-  // tint drop-shadow
+  const el = document.createElement('div'); el.className='walker'; el.dataset.id = w.id;
+  const img = document.createElement('img'); img.src = w.type === 'bellbob' ? 'bellbob.png' : 'spermbob.png';
   const tintMap = { 'Common':'drop-shadow(0 0 6px rgba(255,255,255,0.06))', 'Uncommon':'drop-shadow(0 0 8px rgba(0,255,120,0.10))', 'Rare':'drop-shadow(0 0 8px rgba(0,120,255,0.14))', 'Epic':'drop-shadow(0 0 10px rgba(200,50,255,0.16))' };
   img.style.filter = tintMap[w.rarity] || '';
   el.appendChild(img);
-
-  const label = document.createElement('div');
-  label.className = 'label';
-  label.textContent = `${w.rarity} • $${w.cost}`;
-  el.appendChild(label);
-
-  // ensure label won't overlap offscreen — we'll adjust after layout
-  el.style.left = '-80px';
-  el.style.top = (8 + Math.random() * (road.clientHeight - 64)) + 'px';
-  road.appendChild(el);
-
-  // reposition label if would overflow when placed along road; we'll handle dynamically during animation too
+  const label = document.createElement('div'); label.className='label'; label.textContent = `${w.rarity} • $${w.cost}`; el.appendChild(label);
+  el.style.left = '-80px'; el.style.top = (8 + Math.random() * (road.clientHeight - 64)) + 'px'; road.appendChild(el);
   localWalkers[w.id] = { walker: w, el, spawnTime: performance.now() };
-
-  // click to buy
-  el.addEventListener('click', () => {
+  el.addEventListener('click', ()=>{
     if (!ws || ws.readyState !== WebSocket.OPEN || !myId) { alert('Not connected'); return; }
-    safeSend({ type: 'buyRequest', itemId: w.id });
+    safeSend({ type:'buyRequest', itemId: w.id });
   });
 }
+function removeLocalWalker(id){ const e = localWalkers[id]; if (!e) return; try { e.el.remove(); } catch(_){} delete localWalkers[id]; }
 
-/* Remove local walker */
-function removeLocalWalker(id) {
-  const e = localWalkers[id];
-  if (!e) return;
-  try { e.el.remove(); } catch(_) {}
-  delete localWalkers[id];
-}
-
-/* Animate walkers: client-side smooth movement over WALKER_DURATION */
+/* Animate walkers: smooth client-side movement */
 let lastFrame = performance.now();
-function animate(now) {
-  const dt = now - lastFrame;
-  lastFrame = now;
-  const roadWidth = Math.max(1, road.clientWidth - 64); // subtract sprite
-  for (const id in localWalkers) {
-    const entry = localWalkers[id];
-    const elapsed = now - entry.spawnTime;
-    const t = Math.min(1, elapsed / WALKER_DURATION);
-    entry.el.style.left = Math.round(t * roadWidth) + 'px';
-    // label repositioning (Option C): ensure label fits horizontally and vertically
-    const label = entry.el.querySelector('.label');
-    if (label) {
-      // compute label bounding if centered under sprite
-      const labelWidth = Math.min(120, label.offsetWidth || 80);
-      const leftPx = parseInt(entry.el.style.left || '0', 10);
-      // if label would overflow right edge, move it to the left of sprite
-      if (leftPx + 22 + labelWidth > roadWidth + 64) { // 22 is half sprite approx
-        label.style.position = 'absolute';
-        label.style.left = (-(labelWidth + 6)) + 'px';
-        label.style.bottom = '0px';
-      } else if (leftPx < labelWidth / 2) {
-        // would overflow left
-        label.style.position = 'absolute';
-        label.style.left = '6px';
-        label.style.bottom = '0px';
-      } else {
-        // normal under-sprite centered
-        label.style.position = '';
-        label.style.left = '';
-        label.style.bottom = '';
-      }
-      // if label would overflow vertical bounds of road, move it above the sprite
-      const topPx = parseInt(entry.el.style.top || '0', 10);
-      if (topPx + 44 + 18 > road.clientHeight) { // sprite height + label height
-        label.style.bottom = (44 + 6) + 'px'; // place above sprite
-      }
-    }
-
-    if (t >= 1) {
-      // finished walking -> remove locally (server will also remove after lifetime if still present)
-      entry.el.remove();
-      delete localWalkers[id];
-    }
-  }
-  requestAnimationFrame(animate);
-}
+function animate(now){ const dt = now - lastFrame; lastFrame = now; const roadWidth = Math.max(1, road.clientWidth - 64); for (const id in localWalkers){ const entry = localWalkers[id]; const elapsed = now - entry.spawnTime; const t = Math.min(1, elapsed / WALKER_DURATION); entry.el.style.left = Math.round(t * roadWidth) + 'px'; const label = entry.el.querySelector('.label'); if (label){ const labelWidth = Math.min(120, label.offsetWidth || 80); const leftPx = parseInt(entry.el.style.left||'0',10); if (leftPx + 22 + labelWidth > roadWidth + 64){ label.style.position='absolute'; label.style.left = (-(labelWidth + 6)) + 'px'; label.style.bottom='0px'; } else if (leftPx < labelWidth/2){ label.style.position='absolute'; label.style.left = '6px'; label.style.bottom='0px'; } else { label.style.position=''; label.style.left=''; label.style.bottom=''; } const topPx = parseInt(entry.el.style.top||'0',10); if (topPx + 44 + 18 > road.clientHeight){ label.style.bottom = (44 + 6) + 'px'; } } if (t >= 1){ entry.el.remove(); delete localWalkers[id]; } } requestAnimationFrame(animate); }
 requestAnimationFrame(animate);
 
 /* Render players & collections */
-function renderPlayerList() {
-  playersNames.innerHTML = '';
-  const ids = Object.keys(players);
-  ids.forEach(id => {
-    const d = document.createElement('div');
-    d.textContent = players[id].username || 'player';
-    playersNames.appendChild(d);
-  });
-}
+function renderPlayerList(){ playersNames.innerHTML=''; Object.keys(players).forEach(id=>{ const d=document.createElement('div'); d.textContent = players[id].username || 'player'; playersNames.appendChild(d); }); }
 
-function renderCollections() {
-  collectionsArea.innerHTML = '';
-  // order: show self first if available
-  let ids = Object.keys(players);
-  if (myId && players[myId]) {
-    ids = [myId, ...ids.filter(i => i !== myId)];
-  }
-  ids.forEach(id => {
-    const p = players[id];
-    const block = document.createElement('div'); block.className = 'collection';
-    const title = document.createElement('div'); title.style.fontWeight='700'; title.style.marginBottom='6px';
-    title.textContent = p.username || 'player';
-    block.appendChild(title);
-    const slots = document.createElement('div'); slots.className = 'slots';
-    (p.collection || Array(COLLECTION_SLOTS).fill(null)).forEach((it, idx) => {
-      const slot = document.createElement('div'); slot.className = 'slot';
-      if (it) {
-        const img = document.createElement('img');
-        img.src = it.type === 'bellbob' ? 'bellbob.png' : 'spermbob.png';
-        img.style.filter = (it.rarity && ({ 'Common':'drop-shadow(0 0 6px rgba(255,255,255,0.06))', 'Uncommon':'drop-shadow(0 0 8px rgba(0,255,120,0.10))', 'Rare':'drop-shadow(0 0 8px rgba(0,120,255,0.14))', 'Epic':'drop-shadow(0 0 10px rgba(200,50,255,0.16))' })[it.rarity]) || '';
-        slot.appendChild(img);
-        const meta = document.createElement('div'); meta.className='meta'; meta.textContent = `${it.rarity} • $${it.mps}/s`;
-        slot.appendChild(meta);
-        if (id === myId) attachHoldSell(slot, idx);
-        else attachHoldSteal(slot, idx, id);
-      } else {
-        slot.style.opacity = 0.5;
-      }
-      slots.appendChild(slot);
-    });
-    block.appendChild(slots);
-    collectionsArea.appendChild(block);
-  });
-}
+function renderCollections(){ collectionsArea.innerHTML=''; let ids = Object.keys(players); if (myId && players[myId]) ids = [myId, ...ids.filter(i=>i!==myId)]; ids.forEach(id=>{ const p = players[id]; const block = document.createElement('div'); block.className='collection'; const title = document.createElement('div'); title.style.fontWeight='700'; title.style.marginBottom='6px'; title.textContent = p.username || 'player'; block.appendChild(title); const slots = document.createElement('div'); slots.className='slots'; (p.collection || Array(COLLECTION_SLOTS).fill(null)).forEach((it,idx)=>{ const slot=document.createElement('div'); slot.className='slot'; if (it){ const img=document.createElement('img'); img.src = it.type === 'bellbob' ? 'bellbob.png' : 'spermbob.png'; img.style.filter = (it.rarity && ({ 'Common':'drop-shadow(0 0 6px rgba(255,255,255,0.06))', 'Uncommon':'drop-shadow(0 0 8px rgba(0,255,120,0.10))', 'Rare':'drop-shadow(0 0 8px rgba(0,120,255,0.14))', 'Epic':'drop-shadow(0 0 10px rgba(200,50,255,0.16))' })[it.rarity]) || ''; slot.appendChild(img); const meta=document.createElement('div'); meta.className='meta'; meta.textContent = `${it.rarity} • $${it.mps}/s`; slot.appendChild(meta); if (id === myId) attachHoldSell(slot, idx); else attachHoldSteal(slot, idx, id); } else slot.style.opacity = 0.5; slots.appendChild(slot); }); block.appendChild(slots); collectionsArea.appendChild(block); }); }
 
-/* Sell: hold 5s or right-click */
-function attachHoldSell(el, slotIndex) {
-  let raf = null, start = null, bar = null;
-  function tick(ts) {
-    if (!start) start = ts;
-    const pct = Math.min((ts - start) / SELL_HOLD_MS, 1);
-    if (bar) bar.style.width = (pct * 100) + '%';
-    if (pct >= 1) {
-      cancel();
-      safeSend({ type: 'sell', slot: slotIndex });
-    } else raf = requestAnimationFrame(tick);
-  }
-  function startHold() {
-    if (bar) bar.remove();
-    bar = document.createElement('div'); bar.className = 'stealBar';
-    el.appendChild(bar);
-    start = null; raf = requestAnimationFrame(tick);
-  }
-  function cancel() { if (raf) cancelAnimationFrame(raf); raf = null; start = null; if (bar) { bar.remove(); bar = null; } }
-  el.addEventListener('mousedown', e => { if (e.button !== 0) return; startHold(); });
-  el.addEventListener('mouseup', cancel);
-  el.addEventListener('mouseleave', cancel);
-  el.addEventListener('contextmenu', e => { e.preventDefault(); safeSend({ type: 'sell', slot: slotIndex }); });
-}
+/* Sell: stable hold-to-sell implementation (merged fix) */
+function attachHoldSell(el, slotIndex){ let raf=null, start=null, bar=null; function tick(ts){ if (!start) start=ts; const pct = Math.min((ts - start)/SELL_HOLD_MS, 1); if (bar) bar.style.width = (pct*100)+'%'; if (pct>=1){ cancel(); safeSend({ type:'sell', slot: slotIndex }); } else raf=requestAnimationFrame(tick); } function startHold(){ if (bar) bar.remove(); bar=document.createElement('div'); bar.className='stealBar'; el.appendChild(bar); start=null; raf=requestAnimationFrame(tick); } function cancel(){ if (raf) cancelAnimationFrame(raf); raf=null; start=null; if (bar){ bar.remove(); bar=null; } } el.addEventListener('mousedown', e=>{ if (e.button!==0) return; startHold(); }); el.addEventListener('mouseup', cancel); el.addEventListener('mouseleave', cancel); el.addEventListener('contextmenu', e=>{ e.preventDefault(); safeSend({ type:'sell', slot: slotIndex }); }); }
 
-/* Steal: hold to start local bar, server times the steal; victim can block via arrow keys */
-const activeStealBars = {}; // victim_slot -> interval/bar
-function attachHoldSteal(el, slotIndex, victimId) {
-  let raf = null, start = null, bar = null;
-  function tick(ts) {
-    if (!start) start = ts;
-    const pct = Math.min((ts - start) / STEAL_TIMEOUT_MS, 1);
-    if (bar) bar.style.width = (pct * 100) + '%';
-    if (pct >= 1) { cancel(); /* server will perform transfer */ } else raf = requestAnimationFrame(tick);
-  }
-  function startHold() {
-    if (bar) bar.remove();
-    bar = document.createElement('div'); bar.className = 'stealBar';
-    el.appendChild(bar);
-    safeSend({ type: 'stealStart', victimId, slot: slotIndex });
-    start = null; raf = requestAnimationFrame(tick);
-  }
-  function cancel() { if (raf) cancelAnimationFrame(raf); raf = null; start = null; if (bar) { bar.remove(); bar = null; } }
-  el.addEventListener('mousedown', e => { if (e.button !== 0) return; startHold(); });
-  el.addEventListener('mouseup', cancel); el.addEventListener('mouseleave', cancel);
-}
+/* Steal: attach and server-driven */
+function attachHoldSteal(el, slotIndex, victimId){ let raf=null, start=null, bar=null; function tick(ts){ if (!start) start=ts; const pct = Math.min((ts - start)/STEAL_TIMEOUT_MS, 1); if (bar) bar.style.width = (pct*100) + '%'; if (pct>=1){ cancel(); } else raf=requestAnimationFrame(tick); } function startHold(){ if (bar) bar.remove(); bar=document.createElement('div'); bar.className='stealBar'; el.appendChild(bar); safeSend({ type:'stealStart', victimId, slot: slotIndex }); start=null; raf=requestAnimationFrame(tick); } function cancel(){ if (raf) cancelAnimationFrame(raf); raf=null; start=null; if (bar){ bar.remove(); bar=null; } } el.addEventListener('mousedown', e=>{ if (e.button!==0) return; startHold(); }); el.addEventListener('mouseup', cancel); el.addEventListener('mouseleave', cancel); }
 
-/* server-initiated steal UI helpers */
-function startStealUI(thiefId, victimId, slot) {
-  // find victim block and add bar
-  const collections = document.querySelectorAll('.collection');
-  let found = null;
-  collections.forEach(block => {
-    const title = block.querySelector('div');
-    if (title && title.textContent === (players[victimId]?.username || 'player')) found = block;
-  });
-  if (!found) return;
-  const slotEls = found.querySelectorAll('.slot');
-  const slotEl = slotEls[slot];
-  if (!slotEl) return;
-  const key = `${victimId}_${slot}`;
-  if (activeStealBars[key]) return;
-  const bar = document.createElement('div'); bar.className = 'stealBar';
-  slotEl.appendChild(bar);
-  let progress = 0;
-  const interval = setInterval(() => {
-    progress++;
-    bar.style.width = (progress * 100 / (STEAL_TIMEOUT_MS / 1000)) + '%';
-    if (progress >= (STEAL_TIMEOUT_MS / 1000)) {
-      clearInterval(interval);
-      if (bar) bar.remove();
-      delete activeStealBars[key];
-    }
-  }, 1000);
-  activeStealBars[key] = { bar, interval };
-}
+function startStealUI(thiefId, victimId, slot){ const key = `${victimId}_${slot}`; if (activeStealsUI[key]) return; // locate victim block
+  const blocks = document.querySelectorAll('.collection'); let found=null; blocks.forEach(b=>{ const t=b.querySelector('div'); if (t && t.textContent=== (players[victimId]?.username || 'player')) found=b; }); if (!found) return; const slotEls = found.querySelectorAll('.slot'); const slotEl = slotEls[slot]; if (!slotEl) return; const bar = document.createElement('div'); bar.className='stealBar'; slotEl.appendChild(bar); let progress=0; const interval = setInterval(()=>{ progress++; bar.style.width = (progress*100/(STEAL_TIMEOUT_MS/1000))+'%'; if (progress>=(STEAL_TIMEOUT_MS/1000)){ clearInterval(interval); if (bar) bar.remove(); delete activeStealsUI[key]; } },1000); activeStealsUI[key] = { bar, interval }; }
+function stopStealUI(victimId, slot){ const key=`${victimId}_${slot}`; const ent = activeStealsUI[key]; if (!ent) return; clearInterval(ent.interval); if (ent.bar) ent.bar.remove(); delete activeStealsUI[key]; }
 
-function stopStealUI(victimId, slot) {
-  const key = `${victimId}_${slot}`;
-  const ent = activeStealBars[key];
-  if (!ent) return;
-  clearInterval(ent.interval);
-  if (ent.bar) ent.bar.remove();
-  delete activeStealBars[key];
-}
-
-/* arrow-key defense */
-document.addEventListener('keydown', e => {
-  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
-    if (!myId) return;
-    // best-effort: when victim presses key, tell server to block steals targeted at them
-    safeSend({ type: 'stealBlocked', victimId: myId, slot: null }); // server will match slot(s)
-  }
-});
-
-/* helpers to render players/collections */
-function renderPlayerList() {
-  playersNames.innerHTML = '';
-  Object.keys(players).forEach(id => {
-    const d = document.createElement('div');
-    d.textContent = players[id].username || 'player';
-    playersNames.appendChild(d);
-  });
-}
-
-function renderCollections() {
-  collectionsArea.innerHTML = '';
-  // prefer self first
-  let ids = Object.keys(players);
-  if (myId && players[myId]) ids = [myId, ...ids.filter(i=>i!==myId)];
-  ids.forEach(id => {
-    const p = players[id];
-    const block = document.createElement('div'); block.className = 'collection';
-    const title = document.createElement('div'); title.style.fontWeight='700'; title.style.marginBottom='6px';
-    title.textContent = p.username || 'player';
-    block.appendChild(title);
-    const slots = document.createElement('div'); slots.className = 'slots';
-    (p.collection || Array(COLLECTION_SLOTS).fill(null)).forEach((it, idx) => {
-      const slot = document.createElement('div'); slot.className = 'slot';
-      if (it) {
-        const img = document.createElement('img'); img.src = it.type === 'bellbob' ? 'bellbob.png' : 'spermbob.png';
-        img.style.filter = (it.rarity && ({ 'Common':'drop-shadow(0 0 6px rgba(255,255,255,0.06))', 'Uncommon':'drop-shadow(0 0 8px rgba(0,255,120,0.10))', 'Rare':'drop-shadow(0 0 8px rgba(0,120,255,0.14))', 'Epic':'drop-shadow(0 0 10px rgba(200,50,255,0.16))' })[it.rarity]) || '';
-        slot.appendChild(img);
-        const meta = document.createElement('div'); meta.className='meta'; meta.textContent = `${it.rarity} • $${it.mps}/s`;
-        slot.appendChild(meta);
-        if (id === myId) attachHoldSell(slot, idx);
-        else attachHoldSteal(slot, idx, id);
-      } else slot.style.opacity = 0.5;
-      slots.appendChild(slot);
-    });
-    block.appendChild(slots);
-    collectionsArea.appendChild(block);
-  });
-}
+/* arrow-key defense: send stealBlocked for all active steals targeting me */
+document.addEventListener('keydown', e=>{ if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){ if (!myId) return; // send stealBlocked for each active steal where victim==me
+  Object.keys(activeStealsUI).forEach(k=>{ const [victim,slot] = k.split('_'); if (victim===String(myId)){ safeSend({ type:'stealBlocked', victimId: myId, slot: Number(slot) }); } }); } });
 
 /* periodic money UI update fallback */
-setInterval(() => {
-  if (myId && players[myId]) moneyVal.textContent = Math.floor(players[myId].money || 30);
-}, 500);
-
-/* render helpers that call both */
-function renderPlayerList() { /* noop, collections renders players as well */ }
-
-/* public interface: safeSend wrapper is above */
-
-/* EXPOSE */
-window._localWalkers = localWalkers;
+setInterval(()=>{ if (myId && players[myId]) moneyVal.textContent = Math.floor(players[myId].money || 30); },500);
 
 /* Start UI modal visible on page load */
-usernameModal.style.display = 'flex';
+usernameModal.style.display='flex';
+
+/* expose for debug */
+window._localWalkers = localWalkers;
 </script>
 </body>
 </html>

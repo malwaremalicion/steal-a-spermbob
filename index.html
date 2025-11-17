@@ -5,22 +5,28 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Steal A Spermbob — Multiplayer</title>
 <style>
-body{margin:0;font-family:Arial;background:#071018;color:#e6eef8}
-#top{padding:8px 12px;display:flex;align-items:center;gap:12px;background:rgba(0,0,0,0.2)}
-#money{font-weight:700} #status{margin-left:auto;color:#9aa6b2}
-#main{display:flex;gap:12px;padding:12px}
-#left{flex:1;background:linear-gradient(#05202b,#021018);padding:12px;border-radius:8px}
-#road{height:180px;background:linear-gradient(#0b2630,#041018);position:relative;overflow:hidden;border-radius:6px}
-.walker{position:absolute;display:flex;flex-direction:column;align-items:center;cursor:pointer;transition:left 0.05s linear;}
-.walker img{width:40px;height:40px;filter: brightness(1);}
-.walker .label{margin-top:2px;font-size:12px;color:#fff;text-shadow:0 0 2px #000;text-align:center;white-space:nowrap;}
-#right{width:360px}
-.panel{background:rgba(255,255,255,0.02);padding:12px;border-radius:8px;margin-bottom:12px}
-.player-block{background:rgba(255,255,255,0.01);padding:8px;border-radius:8px;margin-bottom:8px}
-.slots{display:flex;gap:6px;flex-wrap:wrap}
-.slot{width:56px;height:56px;border-radius:8px;background:#07131a;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden}
-.slot .meta{position:absolute;bottom:0;left:0;right:0;font-size:11px;text-align:center;background:linear-gradient(transparent,rgba(0,0,0,0.5))}
-.steal-bar{position:absolute;left:0;bottom:0;height:6px;background:linear-gradient(90deg,#ef4444,#f97316);width:0%}
+  :root{--bg:#071018;--muted:#9aa6b2}
+  body{margin:0;background:linear-gradient(#071018,#001018);font-family:Inter,Arial,sans-serif;color:#e6eef8}
+  #top{position:fixed;left:0;right:0;top:0;height:54px;display:flex;align-items:center;padding:8px 12px;gap:12px;background:rgba(0,0,0,0.25);z-index:40}
+  #money{font-weight:700} #status{margin-left:auto;color:var(--muted)}
+  #playerList{position:fixed;left:12px;top:64px;background:rgba(255,255,255,0.03);padding:8px;border-radius:8px;z-index:40;min-width:160px}
+  #game{padding:80px 12px 12px 200px}
+  #roadPanel{background:linear-gradient(#05202b,#021018);border-radius:8px;padding:12px;max-width:100%;overflow:hidden}
+  #road{height:180px;background:linear-gradient(#0b2630,#041018);position:relative;overflow:hidden;border-radius:6px}
+  .walker{position:absolute;display:flex;flex-direction:column;align-items:center;user-select:none;pointer-events:auto}
+  .walker img{width:44px;height:44px;display:block}
+  .walker .label{font-size:12px;color:#fff;text-shadow:0 0 3px #000;margin-top:4px;max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center}
+  .panel{background:rgba(255,255,255,0.03);padding:12px;border-radius:10px;margin-top:12px}
+  .collectionsRow{display:flex;flex-direction:column;gap:12px;max-height:60vh;overflow:auto}
+  .collection{background:rgba(255,255,255,0.01);padding:8px;border-radius:8px}
+  .slots{display:flex;gap:8px;flex-wrap:wrap}
+  .slot{width:64px;height:64px;border-radius:8px;background:#0b1720;border:1px solid rgba(255,255,255,0.03);position:relative;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .slot img{width:56px;height:56px}
+  .slot .meta{position:absolute;bottom:2px;left:4px;right:4px;text-align:center;font-size:11px}
+  .stealBar{position:absolute;left:0;bottom:0;height:6px;background:linear-gradient(90deg,#ef4444,#f97316);width:0%}
+  #usernameModal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);z-index:100}
+  .card{background:#07161a;padding:18px;border-radius:12px;width:340px}
+  button,input{font-family:inherit}
 </style>
 </head>
 <body>
@@ -29,149 +35,437 @@ body{margin:0;font-family:Arial;background:#071018;color:#e6eef8}
   <div id="roomShow">Room: <span id="roomLabel">—</span></div>
   <div id="status">Not connected</div>
 </div>
-<div id="main">
-  <div id="left">
-    <h3>Road</h3>
+
+<div id="playerList"><strong>Players</strong><div id="playersNames">—</div></div>
+
+<div id="game">
+  <div id="roadPanel">
+    <h3 style="margin:6px 0">Road</h3>
     <div id="road"></div>
   </div>
-  <div id="right">
-    <div class="panel">
-      <input id="roomCode" placeholder="room code"/> <button id="join">Join</button>
+
+  <div class="panel">
+    <div style="display:flex;gap:8px">
+      <input id="roomCode" placeholder="room code" style="flex:1;padding:8px;border-radius:8px;border:0;background:#051218;color:#e6eef8">
+      <button id="hostBtn">Host</button>
+      <button id="joinBtn">Join</button>
     </div>
-    <div id="collections" class="panel"></div>
+    <div style="margin-top:8px" class="panel">
+      <strong>Your and Others' Collections</strong>
+      <div id="collectionsArea" class="collectionsRow"></div>
+    </div>
   </div>
 </div>
 
-<audio id="bgm" src="bgm.mp3" loop autoplay></audio>
+<!-- username modal -->
+<div id="usernameModal">
+  <div class="card">
+    <h2 style="margin:0 0 8px 0">Choose a username</h2>
+    <input id="usernameInput" placeholder="username" style="width:100%;padding:8px;border-radius:8px;border:0;background:#08131a;color:#e6eef8">
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <input id="roomInput" placeholder="room code (pick any)" style="flex:1;padding:8px;border-radius:8px;border:0;background:#08131a;color:#e6eef8">
+      <button id="enterBtn">Enter</button>
+    </div>
+    <div style="margin-top:10px;color:var(--muted)">Music will start after you join.</div>
+  </div>
+</div>
+
+<audio id="bgm" src="bgm.mp3" loop></audio>
 
 <script>
+/* ---------- CONFIG ---------- */
 const WS_URL = 'wss://spermbob-server-production.up.railway.app';
+const WALKER_DURATION = 10000; // client-side travel time in ms
 const SELL_HOLD_MS = 5000;
 const STEAL_TIMEOUT_MS = 15000;
 
-let ws=null, myId=null, roomCode=null;
-let players={}, walkers=[];
+/* ---------- STATE ---------- */
+let ws = null;
+let myId = null;
+let username = null;
+let roomCode = null;
+let players = {};        // server snapshot of players
+let localWalkers = {};   // id -> {walker, el, startTime}
 
+/* ---------- DOM ---------- */
 const moneyVal = document.getElementById('moneyVal');
 const statusEl = document.getElementById('status');
 const road = document.getElementById('road');
+const playersNames = document.getElementById('playersNames');
+const collectionsArea = document.getElementById('collectionsArea');
 const roomLabel = document.getElementById('roomLabel');
-const joinBtn = document.getElementById('join');
-const roomCodeInp = document.getElementById('roomCode');
-const collectionsDiv = document.getElementById('collections');
+const usernameModal = document.getElementById('usernameModal');
+const usernameInput = document.getElementById('usernameInput');
+const roomInput = document.getElementById('roomInput');
+const enterBtn = document.getElementById('enterBtn');
+const bgm = document.getElementById('bgm');
 
-joinBtn.addEventListener('click', ()=> {
-  const rc = roomCodeInp.value.trim() || 'lobby';
-  roomCode = rc;
+/* ---------- UI: Username flow ---------- */
+enterBtn.addEventListener('click', () => {
+  const name = usernameInput.value.trim();
+  const rc = roomInput.value.trim() || Math.random().toString(36).slice(2,6);
+  if (!name) return alert('Pick a username');
+  username = name; roomCode = rc;
+  usernameModal.style.display = 'none';
   roomLabel.textContent = roomCode;
-  connect();
+  // user gesture allows autoplay
+  bgm.play().catch(()=>{});
+  connectWS();
 });
 
-function connect(){
-  if(ws && (ws.readyState===WebSocket.OPEN || ws.readyState===WebSocket.CONNECTING)) return;
+/* ---------- WS helpers ---------- */
+function setStatus(s){ statusEl.textContent = s; }
+function safeSend(obj){
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+/* ---------- Connect ---------- */
+let reconnectTimer = null;
+function connectWS(){
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   setStatus('Connecting...');
   ws = new WebSocket(WS_URL);
-  ws.addEventListener('open', ()=> {
+  ws.addEventListener('open', () => {
     setStatus('Connected');
-    const username = 'player'+Math.floor(Math.random()*9999);
-    ws.send(JSON.stringify({ type:'joinRoom', roomCode, username, money:30 }));
+    safeSend({ type:'joinRoom', roomCode, username, money:30 });
+    // request initial snapshot is delivered from server
   });
   ws.addEventListener('message', ev => {
-    let msg; try{ msg=JSON.parse(ev.data); }catch(e){return;}
-    handle(msg);
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch(e){ return; }
+    handleServer(msg);
   });
-  ws.addEventListener('close', ()=> setStatus('Disconnected'));
-  ws.addEventListener('error', ()=> setStatus('Connection error'));
+  ws.addEventListener('close', ()=> {
+    setStatus('Disconnected — retrying...');
+    // clear local walkers & re-sync on reconnect
+    Object.values(localWalkers).forEach(w => w.el.remove());
+    localWalkers = {};
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connectWS, 2000);
+  });
+  ws.addEventListener('error', ()=> { setStatus('Connection error'); });
 }
 
-function setStatus(s){ statusEl.textContent = s; }
-
-function handle(msg){
-  if(msg.type==='roomUpdate'){
-    players = msg.players||{};
-    walkers = msg.walkers||[];
-    // set myId only if not set yet
-    if(!myId){
-      for(const id in players){
-        if(players[id].ws===ws || !myId){ myId=id; break; }
+/* ---------- Server message handling ---------- */
+function handleServer(msg){
+  if (msg.type === 'roomUpdate'){
+    // server authoritative players and current walkers snapshot
+    players = msg.players || {};
+    // myId is not provided by server in this design; deduce by matching username+money? server doesn't send id of this connection.
+    // However server returns players keyed by id — we must find which id corresponds to our username+collection? Simpler: server doesn't know our socket identity on client side.
+    // We'll detect myId by checking username match (username is unique per client session normally).
+    for (const id in players){
+      if (players[id].username === username) {
+        myId = id; break;
       }
     }
-    if(myId && players[myId]) moneyVal.textContent = Math.floor(players[myId].money||30);
-    renderWalkers();
+    // update money if available
+    if (myId && players[myId]) moneyVal.textContent = Math.floor(players[myId].money || 30);
+    // reconcile walkers snapshot: server sends walkers array in roomUpdate (only when full snapshot)
+    if (Array.isArray(msg.walkers)) {
+      // add any walkers not present locally
+      const serverIds = new Set(msg.walkers.map(w=>w.id));
+      msg.walkers.forEach(w => {
+        if (!localWalkers[w.id]) spawnLocalWalker(w);
+      });
+      // remove any local walkers no longer on server
+      Object.keys(localWalkers).forEach(id => { if (!serverIds.has(id)) removeLocalWalker(id); });
+    }
     renderCollections();
+    renderPlayerList();
     return;
   }
-  if(msg.type==='walkerSpawn'){ walkers.push(msg.walker); renderWalkers(); return; }
+
+  if (msg.type === 'walkerSpawn' && msg.walker) {
+    spawnLocalWalker(msg.walker);
+    return;
+  }
+
+  if (msg.type === 'walkerRemove' && msg.id) {
+    removeLocalWalker(msg.id);
+    return;
+  }
+
+  if (msg.type === 'buyResult') {
+    // server responded to our buyRequest
+    if (msg.success) {
+      // server will broadcast updated roomUpdate soon; give immediate UI feedback by updating local players copy
+      // but prefer server roomUpdate for canonical state
+      console.log('Buy succeeded slot', msg.slot, msg.item);
+    } else {
+      alert('Buy failed: ' + (msg.reason || 'unknown'));
+    }
+    return;
+  }
+
+  if (msg.type === 'stealStart') {
+    // show steal UI for victim & show progress bars client-side (server also times out)
+    startStealUI(msg.thiefId, msg.victimId, msg.slot);
+    if (msg.victimId === myId) alert(`SOMEONE IS STEALING YOUR SLOT ${msg.slot} — press arrow keys to block`);
+    return;
+  }
+
+  if (msg.type === 'stealBlocked' || msg.type === 'stealSuccess') {
+    stopStealUI(msg.victimId, msg.slot);
+    renderCollections(); // server will also broadcast final state
+    return;
+  }
 }
 
-function renderWalkers(){
-  road.innerHTML='';
-  walkers.forEach(w=>{
-    const el=document.createElement('div');
-    el.className='walker';
-    el.dataset.id=w.id;
-    el.innerHTML=`<img src="${w.type==='bellbob'?'bellbob.png':'spermbob.png'}"><div class="label">${w.rarity} $${w.cost}</div>`;
-    el.style.top=(20+Math.random()*100)+'px';
-    el.style.left=w.pos+'px';
-    el.addEventListener('click', ()=> attemptBuy(w.id));
-    road.appendChild(el);
+/* ---------- Local walker animation (client-side smooth) ---------- */
+const ROAD_LEFT = 0;
+let lastFrame = performance.now();
+function spawnLocalWalker(walker) {
+  // don't spawn if already present
+  if (localWalkers[walker.id]) return;
+  const el = document.createElement('div');
+  el.className = 'walker';
+  el.dataset.id = walker.id;
+  // sprite and label
+  const img = document.createElement('img');
+  img.src = walker.type === 'bellbob' ? 'bellbob.png' : 'spermbob.png';
+  // tint by rarity (subtle)
+  const tintMap = { 'Common': 'drop-shadow(0 0 6px rgba(255,255,255,0.06))',
+                    'Uncommon': 'drop-shadow(0 0 8px rgba(0,255,120,0.10))',
+                    'Rare': 'drop-shadow(0 0 8px rgba(0,120,255,0.14))',
+                    'Epic': 'drop-shadow(0 0 10px rgba(200,50,255,0.16))' };
+  img.style.filter = tintMap[walker.rarity] || '';
+  el.appendChild(img);
+  const label = document.createElement('div');
+  label.className = 'label';
+  label.textContent = `${walker.rarity} • $${walker.cost}`;
+  el.appendChild(label);
+
+  // place off-screen left at spawn
+  const top = 20 + Math.random() * (road.clientHeight - 60);
+  el.style.top = Math.max(6, Math.min(top, road.clientHeight - 54)) + 'px';
+  el.style.left = (-60) + 'px';
+  road.appendChild(el);
+
+  // store local walker with start time to animate for WALKER_DURATION ms
+  localWalkers[walker.id] = { walker, el, spawnTime: performance.now() };
+
+  // click to buy -> send buyRequest (server authoritative)
+  el.addEventListener('click', () => {
+    // only allow buy if connected
+    if (!ws || ws.readyState !== WebSocket.OPEN || !myId) {
+      alert('Not connected'); return;
+    }
+    // send buy request to server - server will pick first free slot
+    safeSend({ type: 'buyRequest', itemId: walker.id });
   });
 }
 
-function attemptBuy(itemId){
-  if(!myId || !players[myId]) { alert('Not connected'); return; }
-  const free = players[myId].collection.findIndex(x=>!x);
-  if(free===-1){ alert('No free slot'); return; }
-  ws.send(JSON.stringify({ type:'buy', slot:free, itemId }));
-  const node = document.querySelector(`.walker[data-id="${itemId}"]`); if(node) node.remove();
+// Called to remove local walker by id (server says removed because bought or timed out)
+function removeLocalWalker(id) {
+  const entry = localWalkers[id];
+  if (!entry) return;
+  try { entry.el.remove(); } catch(e) {}
+  delete localWalkers[id];
 }
 
-function renderCollections(){
-  collectionsDiv.innerHTML='';
-  Object.keys(players).forEach(id=>{
-    const p=players[id];
-    const block=document.createElement('div'); block.className='player-block';
-    block.innerHTML=`<div style="font-weight:700">${p.username||'player'}</div>`;
-    const slots=document.createElement('div'); slots.className='slots';
-    (p.collection||Array(8).fill(null)).forEach((it,idx)=>{
-      const s=document.createElement('div'); s.className='slot';
-      if(it){
-        const img=document.createElement('img'); img.src=it.type==='bellbob'?'bellbob.png':'spermbob.png';
-        img.style.width='48px'; img.style.height='48px';
-        s.appendChild(img);
-        const meta=document.createElement('div'); meta.className='meta'; meta.textContent=`${it.rarity} $${it.mps}/s`; s.appendChild(meta);
-        if(id===myId) attachHoldSell(s, idx); else attachHoldSteal(s, idx, id);
-      } else s.style.opacity=0.6;
-      slots.appendChild(s);
+/* animation loop - moves each localWalker by TIME fraction across road */
+function animateFrame(now) {
+  const dt = now - lastFrame;
+  lastFrame = now;
+  const duration = WALKER_DURATION;
+  const roadWidth = Math.max(1, road.clientWidth - 60); // subtract sprite width
+  for (const id in localWalkers) {
+    const ent = localWalkers[id];
+    const elapsed = now - ent.spawnTime;
+    const t = Math.min(1, elapsed / duration);
+    // left position = ROAD_LEFT + t * roadWidth
+    ent.el.style.left = Math.round(ROAD_LEFT + t * roadWidth) + 'px';
+    // if done, remove (client-side)
+    if (t >= 1) {
+      ent.el.remove();
+      delete localWalkers[id];
+      // inform server optionally (not necessary — server removes after lifetime)
+    }
+  }
+  requestAnimationFrame(animateFrame);
+}
+requestAnimationFrame(animateFrame);
+
+/* ---------- Render UI: collections & players ---------- */
+function renderPlayerList() {
+  playersNames.innerHTML = '';
+  const ids = Object.keys(players);
+  ids.forEach(id => {
+    const div = document.createElement('div');
+    div.textContent = players[id].username || 'player';
+    playersNames.appendChild(div);
+  });
+}
+
+function renderCollections() {
+  collectionsArea.innerHTML = '';
+  // order: self first if present
+  const ids = Object.keys(players);
+  if (myId && players[myId]) {
+    // move myId first
+    const others = ids.filter(i => i !== myId);
+    ids.splice(0, ids.length, myId, ...others);
+  }
+  ids.forEach(id => {
+    const p = players[id];
+    const block = document.createElement('div');
+    block.className = 'collection';
+    const title = document.createElement('div');
+    title.style.fontWeight = '700';
+    title.style.marginBottom = '6px';
+    title.textContent = p.username || 'player';
+    block.appendChild(title);
+    const slots = document.createElement('div');
+    slots.className = 'slots';
+    (p.collection || Array(8).fill(null)).forEach((it, idx) => {
+      const slot = document.createElement('div');
+      slot.className = 'slot';
+      if (it) {
+        const img = document.createElement('img');
+        img.src = it.type === 'bellbob' ? 'bellbob.png' : 'spermbob.png';
+        img.style.filter = (it.rarity && ({ 'Common':'drop-shadow(0 0 6px rgba(255,255,255,0.06))', 'Uncommon':'drop-shadow(0 0 8px rgba(0,255,120,0.10))', 'Rare':'drop-shadow(0 0 8px rgba(0,120,255,0.14))', 'Epic':'drop-shadow(0 0 10px rgba(200,50,255,0.16))' })[it.rarity]) || '';
+        slot.appendChild(img);
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        meta.textContent = `${it.rarity} • $${it.mps}/s`;
+        slot.appendChild(meta);
+        if (id === myId) attachHoldSell(slot, idx);
+        else attachHoldSteal(slot, idx, id);
+      } else {
+        slot.style.opacity = 0.5;
+      }
+      slots.appendChild(slot);
     });
     block.appendChild(slots);
-    collectionsDiv.appendChild(block);
+    collectionsArea.appendChild(block);
   });
 }
 
-function attachHoldSell(el, slotIndex){
-  let raf=null, start=null, bar=null;
-  function tick(ts){ if(!start) start=ts; const pct=Math.min((ts-start)/SELL_HOLD_MS*100,100); bar.style.width=pct+'%'; if(pct>=100){ cancel(); ws.send(JSON.stringify({ type:'sell', slot:slotIndex })); } else raf=requestAnimationFrame(tick); }
-  function startHold(){ if(bar) bar.remove(); bar=document.createElement('div'); bar.className='steal-bar'; el.appendChild(bar); start=null; raf=requestAnimationFrame(tick); }
-  function cancel(){ if(raf) cancelAnimationFrame(raf); raf=null; start=null; if(bar){ bar.remove(); bar=null; } }
-  el.addEventListener('mousedown',e=>{if(e.button!==0)return; startHold();});
-  el.addEventListener('mouseup', cancel); el.addEventListener('mouseleave', cancel);
-  el.addEventListener('contextmenu', e=>{ e.preventDefault(); ws.send(JSON.stringify({ type:'sell', slot:slotIndex })); });
+/* ---------- sell & steal UI helpers ---------- */
+function attachHoldSell(el, slotIndex) {
+  let raf = null, start = null, bar = null;
+  function tick(ts) {
+    if (!start) start = ts;
+    const pct = Math.min((ts - start) / SELL_HOLD_MS, 1);
+    if (bar) bar.style.width = (pct * 100) + '%';
+    if (pct >= 1) {
+      cancel();
+      safeSend({ type: 'sell', slot: slotIndex });
+    } else {
+      raf = requestAnimationFrame(tick);
+    }
+  }
+  function startHold() {
+    if (bar) bar.remove();
+    bar = document.createElement('div'); bar.className = 'stealBar';
+    el.appendChild(bar);
+    start = null; raf = requestAnimationFrame(tick);
+  }
+  function cancel() { if (raf) cancelAnimationFrame(raf); raf = null; start = null; if (bar) { bar.remove(); bar = null; } }
+  el.addEventListener('mousedown', e => { if (e.button !== 0) return; startHold(); });
+  el.addEventListener('mouseup', cancel);
+  el.addEventListener('mouseleave', cancel);
+  el.addEventListener('contextmenu', e => { e.preventDefault(); safeSend({ type: 'sell', slot: slotIndex }); });
 }
 
-function attachHoldSteal(el, slotIndex, victimId){
-  let raf=null, start=null, bar=null;
-  function tick(ts){ if(!start) start=ts; const pct=Math.min((ts-start)/STEAL_TIMEOUT_MS*100,100); bar.style.width=pct+'%'; if(pct>=100){ cancel(); } else raf=requestAnimationFrame(tick); }
-  function startHold(){ if(bar) bar.remove(); bar=document.createElement('div'); bar.className='steal-bar'; el.appendChild(bar); ws.send(JSON.stringify({ type:'stealStart', victimId, slot:slotIndex })); start=null; raf=requestAnimationFrame(tick); }
-  function cancel(){ if(raf) cancelAnimationFrame(raf); raf=null; start=null; if(bar){ bar.remove(); bar=null; } }
-  el.addEventListener('mousedown', e=>{if(e.button!==0)return; startHold();});
+const activeStealsUI = {}; // key victim_slot -> { barEl, interval }
+
+function startStealUI(thiefId, victimId, slot) {
+  const key = `${victimId}_${slot}`;
+  // find victim collection slot element
+  const collections = document.querySelectorAll('.collection');
+  let found = null;
+  collections.forEach(block => {
+    const title = block.querySelector('div');
+    if (title && title.textContent === (players[victimId]?.username || 'player')) found = block;
+  });
+  if (!found) return;
+  const slotEls = found.querySelectorAll('.slot');
+  const slotEl = slotEls[slot];
+  if (!slotEl) return;
+  // create bar
+  if (activeStealsUI[key]) return;
+  const bar = document.createElement('div'); bar.className = 'stealBar';
+  slotEl.appendChild(bar);
+  let progress = 0;
+  const interval = setInterval(() => {
+    progress++;
+    bar.style.width = (progress * 100 / (STEAL_TIMEOUT_MS / 1000)) + '%';
+    if (progress >= (STEAL_TIMEOUT_MS / 1000)) {
+      clearInterval(interval);
+      if (bar) bar.remove();
+      delete activeStealsUI[key];
+    }
+  }, 1000);
+  activeStealsUI[key] = { bar, interval };
+}
+
+function stopStealUI(victimId, slot) {
+  const key = `${victimId}_${slot}`;
+  const entry = activeStealsUI[key];
+  if (!entry) return;
+  clearInterval(entry.interval);
+  if (entry.bar) entry.bar.remove();
+  delete activeStealsUI[key];
+}
+
+function attachHoldSteal(el, slotIndex, victimId) {
+  let raf = null, start = null, bar = null;
+  function tick(ts) {
+    if (!start) start = ts;
+    const pct = Math.min((ts - start) / STEAL_TIMEOUT_MS, 1);
+    if (bar) bar.style.width = (pct * 100) + '%';
+    if (pct >= 1) {
+      cancel();
+      // server will apply steal after its own timeout — we only started local bar
+    } else raf = requestAnimationFrame(tick);
+  }
+  function startHold() {
+    if (bar) bar.remove();
+    bar = document.createElement('div'); bar.className = 'stealBar';
+    el.appendChild(bar);
+    // inform server to start
+    safeSend({ type: 'stealStart', victimId, slot: slotIndex });
+    start = null; raf = requestAnimationFrame(tick);
+  }
+  function cancel() { if (raf) cancelAnimationFrame(raf); raf = null; start = null; if (bar) { bar.remove(); bar = null; } }
+  el.addEventListener('mousedown', e => { if (e.button !== 0) return; startHold(); });
   el.addEventListener('mouseup', cancel); el.addEventListener('mouseleave', cancel);
 }
 
-setInterval(()=>{ if(myId && players[myId]) moneyVal.textContent=Math.floor(players[myId].money||30); },500);
-document.addEventListener('keydown', e=>{ if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){ if(!myId)return; ws.send(JSON.stringify({ type:'stealBlocked', victimId:myId, slot:null })); } });
+/* ---------- arrow-key defense ---------- */
+document.addEventListener('keydown', e => {
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) {
+    if (!myId) return;
+    safeSend({ type: 'stealBlocked', victimId: myId, slot: null });
+  }
+});
 
+/* ---------- helpers to render players & collections ---------- */
+function renderPlayerList() {
+  const container = document.getElementById('playersNames');
+  container.innerHTML = '';
+  Object.keys(players).forEach(id => {
+    const d = document.createElement('div');
+    d.textContent = players[id].username || 'player';
+    container.appendChild(d);
+  });
+}
+
+/* wrapper render call used after server updates */
+function renderPlayerList() { /* handled in renderCollections below for combined UI */ }
+
+/* ---------- periodic money display fallback ---------- */
+setInterval(() => {
+  if (myId && players[myId]) moneyVal.textContent = Math.floor(players[myId].money || 30);
+}, 500);
+
+/* ---------- init: show modal ---------- */
+usernameModal.style.display = 'flex';
+
+/* ---------- debug exposure ---------- */
+window._localWalkers = localWalkers;
 </script>
 </body>
 </html>
-

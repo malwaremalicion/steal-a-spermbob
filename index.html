@@ -26,7 +26,12 @@
   .stealBar{position:absolute;left:0;bottom:0;height:6px;background:linear-gradient(90deg,#ef4444,#f97316);width:0%}
   #usernameModal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);z-index:100}
   .card{background:#07161a;padding:18px;border-radius:12px;width:340px}
-  button,input{font-family:inherit}
+  /* popup mini-game */
+  #stealPopupOverlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);z-index:200}
+  #stealBox{width:320px;height:220px;background:#071820;padding:12px;border-radius:10px;border:2px solid rgba(255,255,255,0.04);display:flex;flex-direction:column;align-items:center;gap:8px}
+  #stealCanvasWrap{position:relative;background:#00131a;border-radius:8px;width:280px;height:140px;overflow:hidden;border:1px solid rgba(255,255,255,0.03)}
+  #stealMsg{color:#e6eef8}
+  #stealTimer{color:var(--muted);font-size:13px}
 </style>
 </head>
 <body>
@@ -58,7 +63,7 @@
       <button id="saveBtn">Save</button>
       <button id="loadBtn">Load</button>
       <button id="resetBtn">Reset</button>
-      <span style="margin-left:12px;color:var(--muted)">Hold left click to sell (5s). Click other slot to start steal (15s). Use arrow keys to block steals.</span>
+      <span style="margin-left:12px;color:var(--muted)">Hold left click to sell (5s). Click other slot to start steal (15s). Popup appears to block steals.</span>
     </div>
   </div>
 </div>
@@ -75,6 +80,15 @@
   </div>
 </div>
 
+<!-- popup for steal-block mini-game -->
+<div id="stealPopupOverlay">
+  <div id="stealBox">
+    <div id="stealMsg">Someone is stealing your item!</div>
+    <div id="stealCanvasWrap"></div>
+    <div id="stealTimer">Time left: <span id="stealTimeLeft">8</span>s</div>
+  </div>
+</div>
+
 <audio id="bgm" src="bgm.mp3" loop></audio>
 
 <script>
@@ -83,6 +97,7 @@ const WS_URL = 'wss://spermbob-server-production.up.railway.app';
 const WALKER_DURATION = 10000; // client travel time (ms) — matches server lifetime
 const SELL_HOLD_MS = 5000;
 const STEAL_TIMEOUT_MS = 15000;
+const BLOCK_POPUP_MS = 8000; // victim has 8 seconds to click mini-game target
 const COLLECTION_SLOTS = 8;
 
 /* STATE */
@@ -92,7 +107,6 @@ let username = null;
 let roomCode = null;
 let players = {};          // server snapshot
 let localWalkers = {};     // id -> { walker, el, spawnTime }
-let activeStealsUI = {};   // key victim_slot -> { bar, interval }
 
 /* DOM */
 const moneyVal = document.getElementById('moneyVal');
@@ -107,6 +121,11 @@ const roomInput = document.getElementById('roomInput');
 const enterBtn = document.getElementById('enterBtn');
 const bgm = document.getElementById('bgm');
 
+const stealOverlay = document.getElementById('stealPopupOverlay');
+const stealCanvasWrap = document.getElementById('stealCanvasWrap');
+const stealTimeLeft = document.getElementById('stealTimeLeft');
+const stealMsg = document.getElementById('stealMsg');
+
 /* UI: username flow */
 enterBtn.addEventListener('click', () => {
   const name = usernameInput.value.trim();
@@ -115,16 +134,15 @@ enterBtn.addEventListener('click', () => {
   username = name; roomCode = rc;
   usernameModal.style.display = 'none';
   roomLabel.textContent = roomCode;
-  // play BGM on user gesture
   bgm.play().catch(()=>{});
   connectWS();
 });
 
-document.getElementById('hostBtn').addEventListener('click', ()=>{
+document.getElementById('hostBtn').addEventListener('click', ()=> {
   const c = Math.random().toString(36).slice(2,6);
   document.getElementById('roomCode').value = c;
 });
-document.getElementById('joinBtn').addEventListener('click', ()=>{
+document.getElementById('joinBtn').addEventListener('click', ()=> {
   const c = document.getElementById('roomCode').value.trim();
   if (!c) return alert('enter room code');
   roomCode = c;
@@ -144,16 +162,13 @@ document.getElementById('saveBtn').addEventListener('click', ()=>{
   localStorage.setItem('spermbob_save', JSON.stringify(data));
   alert('Saved locally');
 });
-
 document.getElementById('loadBtn').addEventListener('click', ()=>{
   const d = JSON.parse(localStorage.getItem('spermbob_save')||'null');
   if (!d) return alert('No save found');
-  // apply locally and send update to server (server authoritative will resolve)
   if (!myId) return alert('Not in room yet');
   safeSend({ type:'update', collection: d.collection, money: d.money });
   alert('Loaded and synced');
 });
-
 document.getElementById('resetBtn').addEventListener('click', ()=>{
   if (!confirm('Reset save?')) return;
   localStorage.removeItem('spermbob_save');
@@ -181,85 +196,328 @@ function connectWS(){
 
 /* Handle server messages */
 function handleServer(msg){
-  if (msg.type === 'roomUpdate'){
+  if (msg.type === 'roomUpdate') {
     players = msg.players || {};
-    if (msg.you) myId = msg.you; // server may send who "you" are
+    if (msg.you) myId = msg.you;
     if (myId && players[myId]) moneyVal.textContent = Math.floor(players[myId].money || 30);
-    if (Array.isArray(msg.walkers)){
+    if (Array.isArray(msg.walkers)) {
       const serverIds = new Set(msg.walkers.map(w=>w.id));
       msg.walkers.forEach(w=>{ if (!localWalkers[w.id]) spawnLocalWalker(w); });
       Object.keys(localWalkers).forEach(id=>{ if (!serverIds.has(id)) removeLocalWalker(id); });
     }
-    renderCollections(); renderPlayerList();
+    renderCollections();
+    renderPlayerList();
     return;
   }
-  if (msg.type === 'walkerSpawn' && msg.walker){ spawnLocalWalker(msg.walker); return; }
-  if (msg.type === 'walkerRemove' && msg.id){ removeLocalWalker(msg.id); return; }
-  if (msg.type === 'buyResult'){
-    if (!msg.success) alert('Buy failed: ' + (msg.reason||'unknown'));
+
+  if (msg.type === 'walkerSpawn' && msg.walker) { spawnLocalWalker(msg.walker); return; }
+  if (msg.type === 'walkerRemove' && msg.id) { removeLocalWalker(msg.id); return; }
+
+  if (msg.type === 'buyResult') {
+    if (!msg.success) alert('Buy failed: ' + (msg.reason || 'unknown'));
     else console.log('Buy OK slot', msg.slot);
     return;
   }
-  if (msg.type === 'stealStart'){
-    startStealUI(msg.thiefId, msg.victimId, msg.slot);
-    if (msg.victimId === myId) alert(`SOMEONE IS STEALING YOUR SLOT ${msg.slot} — press arrow keys to block`);
+
+  if (msg.type === 'stealStart') {
+    // Everyone gets this. Victim will also see this.
+    if (msg.victimId === myId) {
+      // victim: open popup mini-game using the item info from players snapshot (server authoritative)
+      openStealPopup(msg.thiefId, msg.victimId, msg.slot);
+    } else {
+      // non-victim: show steal bar UI on collection (handled by renderCollections on next roomUpdate)
+      startStealUI(msg.thiefId, msg.victimId, msg.slot);
+    }
     return;
   }
-  if (msg.type === 'stealBlocked' || msg.type === 'stealSuccess'){
-    stopStealUI(msg.victimId, msg.slot); renderCollections(); return;
+  if (msg.type === 'stealBlocked' || msg.type === 'stealSuccess') {
+    stopStealUI(msg.victimId, msg.slot);
+    renderCollections();
+    return;
   }
 }
 
 /* Local walker spawn/render */
-function spawnLocalWalker(w){
+function spawnLocalWalker(w) {
   if (localWalkers[w.id]) return;
-  const el = document.createElement('div'); el.className='walker'; el.dataset.id = w.id;
-  const img = document.createElement('img'); img.src = w.type === 'bellbob' ? 'bellbob.png' : 'spermbob.png';
+  const el = document.createElement('div');
+  el.className = 'walker';
+  el.dataset.id = w.id;
+  const img = document.createElement('img');
+  img.src = w.type === 'bellbob' ? 'bellbob.png' : 'spermbob.png';
   const tintMap = { 'Common':'drop-shadow(0 0 6px rgba(255,255,255,0.06))', 'Uncommon':'drop-shadow(0 0 8px rgba(0,255,120,0.10))', 'Rare':'drop-shadow(0 0 8px rgba(0,120,255,0.14))', 'Epic':'drop-shadow(0 0 10px rgba(200,50,255,0.16))' };
   img.style.filter = tintMap[w.rarity] || '';
   el.appendChild(img);
-  const label = document.createElement('div'); label.className='label'; label.textContent = `${w.rarity} • $${w.cost}`; el.appendChild(label);
-  el.style.left = '-80px'; el.style.top = (8 + Math.random() * (road.clientHeight - 64)) + 'px'; road.appendChild(el);
+  const label = document.createElement('div'); label.className='label'; label.textContent = `${w.rarity} • $${w.cost}`;
+  el.appendChild(label);
+  el.style.left = '-80px';
+  el.style.top = (8 + Math.random() * (road.clientHeight - 64)) + 'px';
+  road.appendChild(el);
   localWalkers[w.id] = { walker: w, el, spawnTime: performance.now() };
-  el.addEventListener('click', ()=>{
+  el.addEventListener('click', ()=> {
     if (!ws || ws.readyState !== WebSocket.OPEN || !myId) { alert('Not connected'); return; }
     safeSend({ type:'buyRequest', itemId: w.id });
   });
 }
-function removeLocalWalker(id){ const e = localWalkers[id]; if (!e) return; try { e.el.remove(); } catch(_){} delete localWalkers[id]; }
+
+function removeLocalWalker(id) {
+  const e = localWalkers[id];
+  if (!e) return;
+  try { e.el.remove(); } catch(_) {}
+  delete localWalkers[id];
+}
 
 /* Animate walkers: smooth client-side movement */
 let lastFrame = performance.now();
-function animate(now){ const dt = now - lastFrame; lastFrame = now; const roadWidth = Math.max(1, road.clientWidth - 64); for (const id in localWalkers){ const entry = localWalkers[id]; const elapsed = now - entry.spawnTime; const t = Math.min(1, elapsed / WALKER_DURATION); entry.el.style.left = Math.round(t * roadWidth) + 'px'; const label = entry.el.querySelector('.label'); if (label){ const labelWidth = Math.min(120, label.offsetWidth || 80); const leftPx = parseInt(entry.el.style.left||'0',10); if (leftPx + 22 + labelWidth > roadWidth + 64){ label.style.position='absolute'; label.style.left = (-(labelWidth + 6)) + 'px'; label.style.bottom='0px'; } else if (leftPx < labelWidth/2){ label.style.position='absolute'; label.style.left = '6px'; label.style.bottom='0px'; } else { label.style.position=''; label.style.left=''; label.style.bottom=''; } const topPx = parseInt(entry.el.style.top||'0',10); if (topPx + 44 + 18 > road.clientHeight){ label.style.bottom = (44 + 6) + 'px'; } } if (t >= 1){ entry.el.remove(); delete localWalkers[id]; } } requestAnimationFrame(animate); }
+function animate(now) {
+  const roadWidth = Math.max(1, road.clientWidth - 64);
+  lastFrame = now;
+  for (const id in localWalkers) {
+    const entry = localWalkers[id];
+    const elapsed = now - entry.spawnTime;
+    const t = Math.min(1, elapsed / WALKER_DURATION);
+    entry.el.style.left = Math.round(t * roadWidth) + 'px';
+    const label = entry.el.querySelector('.label');
+    if (label) {
+      const labelWidth = Math.min(120, label.offsetWidth || 80);
+      const leftPx = parseInt(entry.el.style.left || '0', 10);
+      if (leftPx + 22 + labelWidth > roadWidth + 64) {
+        label.style.position = 'absolute'; label.style.left = (-(labelWidth + 6)) + 'px'; label.style.bottom = '0px';
+      } else if (leftPx < labelWidth / 2) {
+        label.style.position = 'absolute'; label.style.left = '6px'; label.style.bottom = '0px';
+      } else {
+        label.style.position = ''; label.style.left = ''; label.style.bottom = '';
+      }
+      const topPx = parseInt(entry.el.style.top || '0', 10);
+      if (topPx + 44 + 18 > road.clientHeight) { label.style.bottom = (44 + 6) + 'px'; }
+    }
+    if (t >= 1) { entry.el.remove(); delete localWalkers[id]; }
+  }
+  requestAnimationFrame(animate);
+}
 requestAnimationFrame(animate);
 
 /* Render players & collections */
-function renderPlayerList(){ playersNames.innerHTML=''; Object.keys(players).forEach(id=>{ const d=document.createElement('div'); d.textContent = players[id].username || 'player'; playersNames.appendChild(d); }); }
+function renderPlayerList() {
+  playersNames.innerHTML = '';
+  Object.keys(players).forEach(id => {
+    const d = document.createElement('div');
+    d.textContent = players[id].username || 'player';
+    playersNames.appendChild(d);
+  });
+}
 
-function renderCollections(){ collectionsArea.innerHTML=''; let ids = Object.keys(players); if (myId && players[myId]) ids = [myId, ...ids.filter(i=>i!==myId)]; ids.forEach(id=>{ const p = players[id]; const block = document.createElement('div'); block.className='collection'; const title = document.createElement('div'); title.style.fontWeight='700'; title.style.marginBottom='6px'; title.textContent = p.username || 'player'; block.appendChild(title); const slots = document.createElement('div'); slots.className='slots'; (p.collection || Array(COLLECTION_SLOTS).fill(null)).forEach((it,idx)=>{ const slot=document.createElement('div'); slot.className='slot'; if (it){ const img=document.createElement('img'); img.src = it.type === 'bellbob' ? 'bellbob.png' : 'spermbob.png'; img.style.filter = (it.rarity && ({ 'Common':'drop-shadow(0 0 6px rgba(255,255,255,0.06))', 'Uncommon':'drop-shadow(0 0 8px rgba(0,255,120,0.10))', 'Rare':'drop-shadow(0 0 8px rgba(0,120,255,0.14))', 'Epic':'drop-shadow(0 0 10px rgba(200,50,255,0.16))' })[it.rarity]) || ''; slot.appendChild(img); const meta=document.createElement('div'); meta.className='meta'; meta.textContent = `${it.rarity} • $${it.mps}/s`; slot.appendChild(meta); if (id === myId) attachHoldSell(slot, idx); else attachHoldSteal(slot, idx, id); } else slot.style.opacity = 0.5; slots.appendChild(slot); }); block.appendChild(slots); collectionsArea.appendChild(block); }); }
+function renderPlayerList() { /* kept for compatibility with earlier calls */ renderPlayerListImpl(); }
+function renderPlayerListImpl() {
+  playersNames.innerHTML = '';
+  Object.keys(players).forEach(id => {
+    const d = document.createElement('div'); d.textContent = players[id].username || 'player'; playersNames.appendChild(d);
+  });
+}
 
-/* Sell: stable hold-to-sell implementation (merged fix) */
-function attachHoldSell(el, slotIndex){ let raf=null, start=null, bar=null; function tick(ts){ if (!start) start=ts; const pct = Math.min((ts - start)/SELL_HOLD_MS, 1); if (bar) bar.style.width = (pct*100)+'%'; if (pct>=1){ cancel(); safeSend({ type:'sell', slot: slotIndex }); } else raf=requestAnimationFrame(tick); } function startHold(){ if (bar) bar.remove(); bar=document.createElement('div'); bar.className='stealBar'; el.appendChild(bar); start=null; raf=requestAnimationFrame(tick); } function cancel(){ if (raf) cancelAnimationFrame(raf); raf=null; start=null; if (bar){ bar.remove(); bar=null; } } el.addEventListener('mousedown', e=>{ if (e.button!==0) return; startHold(); }); el.addEventListener('mouseup', cancel); el.addEventListener('mouseleave', cancel); el.addEventListener('contextmenu', e=>{ e.preventDefault(); safeSend({ type:'sell', slot: slotIndex }); }); }
+function renderCollections() {
+  collectionsArea.innerHTML = '';
+  let ids = Object.keys(players);
+  if (myId && players[myId]) ids = [myId, ...ids.filter(i => i !== myId)];
+  ids.forEach(id => {
+    const p = players[id];
+    const block = document.createElement('div'); block.className = 'collection';
+    const title = document.createElement('div'); title.style.fontWeight = '700'; title.style.marginBottom = '6px';
+    title.textContent = p.username || 'player';
+    block.appendChild(title);
+    const slots = document.createElement('div'); slots.className = 'slots';
+    (p.collection || Array(COLLECTION_SLOTS).fill(null)).forEach((it, idx) => {
+      const slot = document.createElement('div'); slot.className = 'slot';
+      if (it) {
+        const img = document.createElement('img'); img.src = it.type === 'bellbob' ? 'bellbob.png' : 'spermbob.png';
+        img.style.filter = (it.rarity && ({ 'Common':'drop-shadow(0 0 6px rgba(255,255,255,0.06))', 'Uncommon':'drop-shadow(0 0 8px rgba(0,255,120,0.10))', 'Rare':'drop-shadow(0 0 8px rgba(0,120,255,0.14))', 'Epic':'drop-shadow(0 0 10px rgba(200,50,255,0.16))' })[it.rarity]) || '';
+        slot.appendChild(img);
+        const meta = document.createElement('div'); meta.className = 'meta'; meta.textContent = `${it.rarity} • $${it.mps}/s`;
+        slot.appendChild(meta);
+        if (id === myId) attachHoldSell(slot, idx);
+        else attachHoldSteal(slot, idx, id);
+      } else slot.style.opacity = 0.5;
+      slots.appendChild(slot);
+    });
+    block.appendChild(slots);
+    collectionsArea.appendChild(block);
+  });
+}
 
-/* Steal: attach and server-driven */
-function attachHoldSteal(el, slotIndex, victimId){ let raf=null, start=null, bar=null; function tick(ts){ if (!start) start=ts; const pct = Math.min((ts - start)/STEAL_TIMEOUT_MS, 1); if (bar) bar.style.width = (pct*100) + '%'; if (pct>=1){ cancel(); } else raf=requestAnimationFrame(tick); } function startHold(){ if (bar) bar.remove(); bar=document.createElement('div'); bar.className='stealBar'; el.appendChild(bar); safeSend({ type:'stealStart', victimId, slot: slotIndex }); start=null; raf=requestAnimationFrame(tick); } function cancel(){ if (raf) cancelAnimationFrame(raf); raf=null; start=null; if (bar){ bar.remove(); bar=null; } } el.addEventListener('mousedown', e=>{ if (e.button!==0) return; startHold(); }); el.addEventListener('mouseup', cancel); el.addEventListener('mouseleave', cancel); }
+/* Sell: stable hold-to-sell implementation */
+function attachHoldSell(el, slotIndex) {
+  let raf = null, start = null, bar = null;
+  function tick(ts) {
+    if (!start) start = ts;
+    const pct = Math.min((ts - start) / SELL_HOLD_MS, 1);
+    if (bar) bar.style.width = (pct * 100) + '%';
+    if (pct >= 1) { cancel(); safeSend({ type: 'sell', slot: slotIndex }); }
+    else raf = requestAnimationFrame(tick);
+  }
+  function startHold() {
+    if (bar) bar.remove();
+    bar = document.createElement('div'); bar.className = 'stealBar';
+    el.appendChild(bar);
+    start = null; raf = requestAnimationFrame(tick);
+  }
+  function cancel() { if (raf) cancelAnimationFrame(raf); raf = null; start = null; if (bar) { bar.remove(); bar = null; } }
+  el.addEventListener('mousedown', (e)=> { if (e.button !== 0) return; startHold(); });
+  el.addEventListener('mouseup', cancel); el.addEventListener('mouseleave', cancel);
+  el.addEventListener('contextmenu', e=> { e.preventDefault(); safeSend({ type:'sell', slot: slotIndex }); });
+}
 
-function startStealUI(thiefId, victimId, slot){ const key = `${victimId}_${slot}`; if (activeStealsUI[key]) return; // locate victim block
-  const blocks = document.querySelectorAll('.collection'); let found=null; blocks.forEach(b=>{ const t=b.querySelector('div'); if (t && t.textContent=== (players[victimId]?.username || 'player')) found=b; }); if (!found) return; const slotEls = found.querySelectorAll('.slot'); const slotEl = slotEls[slot]; if (!slotEl) return; const bar = document.createElement('div'); bar.className='stealBar'; slotEl.appendChild(bar); let progress=0; const interval = setInterval(()=>{ progress++; bar.style.width = (progress*100/(STEAL_TIMEOUT_MS/1000))+'%'; if (progress>=(STEAL_TIMEOUT_MS/1000)){ clearInterval(interval); if (bar) bar.remove(); delete activeStealsUI[key]; } },1000); activeStealsUI[key] = { bar, interval }; }
-function stopStealUI(victimId, slot){ const key=`${victimId}_${slot}`; const ent = activeStealsUI[key]; if (!ent) return; clearInterval(ent.interval); if (ent.bar) ent.bar.remove(); delete activeStealsUI[key]; }
+/* Steal: attach hold-to-start (client triggers server stealStart) */
+function attachHoldSteal(el, slotIndex, victimId) {
+  let raf = null, start = null, bar = null;
+  function tick(ts) {
+    if (!start) start = ts;
+    const pct = Math.min((ts - start) / STEAL_TIMEOUT_MS, 1);
+    if (bar) bar.style.width = (pct * 100) + '%';
+    if (pct >= 1) { cancel(); }
+    else raf = requestAnimationFrame(tick);
+  }
+  function startHold() {
+    if (bar) bar.remove();
+    bar = document.createElement('div'); bar.className = 'stealBar';
+    el.appendChild(bar);
+    safeSend({ type: 'stealStart', victimId, slot: slotIndex });
+    start = null; raf = requestAnimationFrame(tick);
+  }
+  function cancel() { if (raf) cancelAnimationFrame(raf); raf = null; start = null; if (bar) { bar.remove(); bar = null; } }
+  el.addEventListener('mousedown', (e)=> { if (e.button !== 0) return; startHold(); });
+  el.addEventListener('mouseup', cancel); el.addEventListener('mouseleave', cancel);
+}
 
-/* arrow-key defense: send stealBlocked for all active steals targeting me */
-document.addEventListener('keydown', e=>{ if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){ if (!myId) return; // send stealBlocked for each active steal where victim==me
-  Object.keys(activeStealsUI).forEach(k=>{ const [victim,slot] = k.split('_'); if (victim===String(myId)){ safeSend({ type:'stealBlocked', victimId: myId, slot: Number(slot) }); } }); } });
+/* UI steal bars for non-victims */
+const activeStealBars = {}; // key victim_slot -> { bar, interval }
+function startStealUI(thiefId, victimId, slot) {
+  const key = `${victimId}_${slot}`;
+  if (activeStealBars[key]) return;
+  // find victim block
+  const blocks = document.querySelectorAll('.collection');
+  let found = null;
+  blocks.forEach(b => {
+    const t = b.querySelector('div');
+    if (t && t.textContent === (players[victimId]?.username || 'player')) found = b;
+  });
+  if (!found) return;
+  const slotEls = found.querySelectorAll('.slot');
+  const slotEl = slotEls[slot];
+  if (!slotEl) return;
+  const bar = document.createElement('div'); bar.className = 'stealBar';
+  slotEl.appendChild(bar);
+  let progress = 0;
+  const interval = setInterval(()=> {
+    progress++;
+    bar.style.width = (progress * 100 / (STEAL_TIMEOUT_MS/1000)) + '%';
+    if (progress >= (STEAL_TIMEOUT_MS/1000)) { clearInterval(interval); if (bar) bar.remove(); delete activeStealBars[key]; }
+  }, 1000);
+  activeStealBars[key] = { bar, interval };
+}
+
+function stopStealUI(victimId, slot) {
+  const key = `${victimId}_${slot}`;
+  const ent = activeStealBars[key];
+  if (!ent) return;
+  clearInterval(ent.interval);
+  if (ent.bar) ent.bar.remove();
+  delete activeStealBars[key];
+}
+
+/* Popup mini-game: smooth rapid movement inside box (Style B) */
+let popupState = null; // { thiefId, victimId, slot, item, startTS, endTS, animHandle, pos, vel, el }
+
+function openStealPopup(thiefId, victimId, slot) {
+  // get victim's item info from players snapshot
+  if (!players[victimId] || !Array.isArray(players[victimId].collection)) return;
+  const item = players[victimId].collection[slot];
+  if (!item) return; // nothing to defend
+  // build popup UI
+  stealMsg.textContent = `Someone is stealing your ${item.rarity} ${item.type}! Click it to block.`;
+  stealTimeLeft.textContent = Math.ceil(BLOCK_POPUP_MS/1000);
+  stealCanvasWrap.innerHTML = '';
+  stealOverlay.style.display = 'flex';
+  // create moving element
+  const mover = document.createElement('img');
+  mover.src = item.type === 'bellbob' ? 'bellbob.png' : 'spermbob.png';
+  mover.style.width = '56px'; mover.style.height = '56px'; mover.style.position = 'absolute';
+  // initial pos/velocity
+  const boxW = stealCanvasWrap.clientWidth;
+  const boxH = stealCanvasWrap.clientHeight;
+  const startX = Math.random() * (boxW - 56);
+  const startY = Math.random() * (boxH - 56);
+  // velocity: random direction, speed ~ 250-350 px/s
+  const speed = 250 + Math.random() * 150;
+  const angle = Math.random() * Math.PI * 2;
+  const vx = Math.cos(angle) * speed;
+  const vy = Math.sin(angle) * speed;
+  mover.style.left = startX + 'px';
+  mover.style.top = startY + 'px';
+  stealCanvasWrap.appendChild(mover);
+
+  const startTS = performance.now();
+  const endTS = startTS + BLOCK_POPUP_MS;
+  popupState = { thiefId, victimId, slot, item, startTS, endTS, mover, pos: { x: startX, y: startY }, vel: { x: vx, y: vy } };
+
+  // click to block
+  function onClickBlock(e) {
+    e.stopPropagation();
+    // only allow if still active
+    if (!popupState) return;
+    // send stealBlocked for this slot
+    safeSend({ type: 'stealBlocked', victimId, slot });
+    closeStealPopup();
+  }
+  mover.addEventListener('click', onClickBlock);
+
+  // animation loop (smooth movement with bounce)
+  function popupFrame(ts) {
+    if (!popupState) return;
+    const dt = (ts - (popupState.lastTS || ts)) / 1000;
+    popupState.lastTS = ts;
+    // move
+    popupState.pos.x += popupState.vel.x * dt;
+    popupState.pos.y += popupState.vel.y * dt;
+    // bounce
+    const maxX = stealCanvasWrap.clientWidth - 56;
+    const maxY = stealCanvasWrap.clientHeight - 56;
+    if (popupState.pos.x < 0) { popupState.pos.x = 0; popupState.vel.x *= -1; }
+    if (popupState.pos.x > maxX) { popupState.pos.x = maxX; popupState.vel.x *= -1; }
+    if (popupState.pos.y < 0) { popupState.pos.y = 0; popupState.vel.y *= -1; }
+    if (popupState.pos.y > maxY) { popupState.pos.y = maxY; popupState.vel.y *= -1; }
+    popupState.mover.style.left = popupState.pos.x + 'px';
+    popupState.mover.style.top = popupState.pos.y + 'px';
+    // timer update
+    const remaining = Math.max(0, popupState.endTS - ts);
+    stealTimeLeft.textContent = Math.ceil(remaining / 1000);
+    if (ts >= popupState.endTS) {
+      // time out -> popup fail (server will finish steal)
+      closeStealPopup();
+    } else {
+      popupState.animHandle = requestAnimationFrame(popupFrame);
+    }
+  }
+  popupState.animHandle = requestAnimationFrame(popupFrame);
+}
+
+function closeStealPopup() {
+  if (!popupState) return;
+  if (popupState.animHandle) cancelAnimationFrame(popupState.animHandle);
+  try { popupState.mover.remove(); } catch(_) {}
+  popupState = null;
+  stealOverlay.style.display = 'none';
+}
+
+/* arrow-key defense removed (old system) */
 
 /* periodic money UI update fallback */
-setInterval(()=>{ if (myId && players[myId]) moneyVal.textContent = Math.floor(players[myId].money || 30); },500);
-
-/* Start UI modal visible on page load */
-usernameModal.style.display='flex';
+setInterval(()=>{ if (myId && players[myId]) moneyVal.textContent = Math.floor(players[myId].money || 30); }, 500);
 
 /* expose for debug */
 window._localWalkers = localWalkers;
+
+/* initial state: show username modal */
+usernameModal.style.display = 'flex';
 </script>
 </body>
 </html>
